@@ -2,8 +2,9 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,9 +13,24 @@ class Settings(BaseSettings):
 
     # --- Application Metadata ---
     app_name: str = "MultiModal-RAG-Engine"
-    app_version: str = "1.0.0"
-    debug: bool = True
+    app_version: str = "1.1.0"
+    debug: bool = False  # Production default: False
     log_level: str = "INFO"
+    log_format: str = "text"  # "text" or "json"
+
+    # --- Security & Authentication ---
+    api_key: Optional[str] = None  # If set, enforces X-API-Key on mutating/query endpoints
+    api_key_header_name: str = "X-API-Key"
+    cors_origins: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+    ]
+
+    # --- API Rate Limiting ---
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 60
 
     # --- VLM / LLM API ---
     vlm_provider: str = "gemini"  # "gemini" or "openai"
@@ -23,10 +39,12 @@ class Settings(BaseSettings):
     vlm_model_name: str = "gemini-1.5-flash"
     vlm_max_concurrent: int = 5
     vlm_max_retries: int = 3
+    vlm_timeout_seconds: float = 30.0
 
     # --- Embeddings ---
     embedding_model_name: str = "all-MiniLM-L6-v2"
     embedding_batch_size: int = 64
+    embedding_dimension: int = 384
 
     # --- Vector Database ---
     chroma_persist_dir: Path = Path("./chroma_db")
@@ -35,14 +53,27 @@ class Settings(BaseSettings):
     # --- Ingestion & Chunking ---
     chunk_size: int = 512
     chunk_overlap: int = 64
-    min_image_dimension: int = 100  # discard images with width or height below this threshold
+    min_image_dimension: int = 100  # discard images with width or height below 100px
+    max_file_size_mb: int = 50
+    duplicate_strategy: str = "replace"  # "replace" or "skip"
 
-    # --- Retrieval ---
+    # --- Retrieval & Guardrails ---
     default_top_k: int = 5
+    min_relevance_score: float = 0.20  # filter out irrelevant chunks below 0.20
+    max_context_chars: int = 8000  # context window guardrail
 
     # --- Storage Directories ---
     upload_dir: Path = Path("./data/uploads")
     extracted_images_dir: Path = Path("./data/extracted_images")
+
+    @field_validator("vlm_provider")
+    @classmethod
+    def validate_vlm_provider(cls, v: str) -> str:
+        valid = {"gemini", "openai"}
+        cleaned = v.strip().lower()
+        if cleaned not in valid:
+            raise ValueError(f"Invalid VLM_PROVIDER '{v}'. Must be one of {valid}")
+        return cleaned
 
     model_config = SettingsConfigDict(
         env_file=".env",

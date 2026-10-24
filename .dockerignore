@@ -1,0 +1,17 @@
+.git
+.gitignore
+.github
+.pytest_cache
+tests
+chroma_db
+data/uploads/*
+!data/uploads/.gitkeep
+data/extracted_images/*
+!data/extracted_images/.gitkeep
+venv
+.venv
+*.pyc
+__pycache__
+.env
+.env.local
+*.md

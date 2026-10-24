@@ -7,10 +7,11 @@ from typing import List, NamedTuple, Optional, Union
 
 import pymupdf as fitz
 
-from app.core.exceptions import PDFParsingError
+from app.core.exceptions import DocumentEmptyError, PDFParsingError, SecurityValidationError
 from app.core.image_extractor import ImageExtractor
 from app.core.text_chunker import RecursiveTextChunker
 from app.models.schemas import ExtractedImage, TextChunk
+from app.utils.file_utils import sanitize_filename, validate_pdf_signature
 
 logger = logging.getLogger(__name__)
 
@@ -36,29 +37,45 @@ class PDFParser:
         self.image_extractor = image_extractor or ImageExtractor()
 
     def parse(self, file_path: Union[str, Path]) -> ParsedPDFDocument:
-        """Synchronously parse a PDF document from disk."""
+        """Synchronously parse a PDF document from disk with signature validation."""
         path = Path(file_path)
         if not path.is_file():
             raise PDFParsingError(f"File not found: {path}")
+
+        # Security check: validate PDF magic bytes
+        try:
+            with open(path, "rb") as f:
+                header = f.read(1024)
+            if not validate_pdf_signature(header):
+                raise SecurityValidationError(f"File '{path.name}' does not contain a valid PDF signature header (%PDF-)")
+        except SecurityValidationError:
+            raise
+        except Exception as e:
+            raise PDFParsingError(f"Could not read file header for {path.name}", details=str(e))
 
         try:
             doc = fitz.open(str(path))
         except Exception as e:
             raise PDFParsingError(f"Failed to open PDF at {path}", details=str(e))
 
-        return self._process_doc(doc, source_pdf=path.name)
+        clean_filename = sanitize_filename(path.name)
+        return self._process_doc(doc, source_pdf=clean_filename)
 
     def parse_bytes(self, pdf_bytes: bytes, filename: str) -> ParsedPDFDocument:
-        """Synchronously parse a PDF document from raw in-memory bytes."""
+        """Synchronously parse a PDF document from raw in-memory bytes with signature validation."""
         if not pdf_bytes:
             raise PDFParsingError("Cannot parse empty PDF byte buffer")
+
+        if not validate_pdf_signature(pdf_bytes):
+            raise SecurityValidationError(f"Uploaded file '{filename}' does not contain a valid PDF signature header (%PDF-)")
 
         try:
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         except Exception as e:
             raise PDFParsingError(f"Failed to parse PDF stream for {filename}", details=str(e))
 
-        return self._process_doc(doc, source_pdf=filename)
+        clean_filename = sanitize_filename(filename)
+        return self._process_doc(doc, source_pdf=clean_filename)
 
     async def parse_async(self, file_path: Union[str, Path]) -> ParsedPDFDocument:
         """Asynchronously parse a PDF document by offloading CPU work to a thread pool."""
@@ -70,13 +87,14 @@ class PDFParser:
 
     def _process_doc(self, doc: fitz.Document, source_pdf: str) -> ParsedPDFDocument:
         """Iterate through pages to extract text chunks and visual elements."""
+        self.image_extractor.reset_deduplication()
         try:
             if doc.is_encrypted:
-                raise PDFParsingError(f"PDF {source_pdf} is encrypted and password-protected")
+                raise PDFParsingError(f"PDF '{source_pdf}' is encrypted and password-protected")
 
             total_pages = len(doc)
             if total_pages == 0:
-                raise PDFParsingError(f"PDF {source_pdf} contains no pages")
+                raise PDFParsingError(f"PDF '{source_pdf}' contains no pages")
 
             all_chunks: List[TextChunk] = []
             all_images: List[ExtractedImage] = []
@@ -106,6 +124,12 @@ class PDFParser:
                     page_number=page_number,
                 )
                 all_images.extend(page_images)
+
+            # Check for completely empty PDF (no text and no images)
+            if len(all_chunks) == 0 and len(all_images) == 0:
+                raise DocumentEmptyError(
+                    f"PDF '{source_pdf}' has {total_pages} page(s) but contains no extractable text or visual figures"
+                )
 
             return ParsedPDFDocument(
                 source_pdf=source_pdf,

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import List, Optional, Union
 
+import httpx
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -35,6 +36,18 @@ VLM_SYSTEM_PROMPT = (
 )
 
 
+# Specific transient exception types eligible for retry (never retry logic/programming errors)
+TRANSIENT_EXCEPTIONS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    ConnectionError,
+    TimeoutError,
+    asyncio.TimeoutError,
+)
+
+
 class VLMService:
     """Orchestrates image summarization requests against Gemini or OpenAI Vision APIs."""
 
@@ -42,6 +55,7 @@ class VLMService:
         self.settings = settings or get_settings()
         self.provider = VLMProvider(self.settings.vlm_provider.lower())
         self.semaphore = asyncio.Semaphore(self.settings.vlm_max_concurrent)
+        self.timeout_seconds = self.settings.vlm_timeout_seconds
         self._gemini_configured = False
         self._openai_client = None
 
@@ -69,7 +83,7 @@ class VLMService:
                 try:
                     from openai import AsyncOpenAI
 
-                    self._openai_client = AsyncOpenAI(api_key=key)
+                    self._openai_client = AsyncOpenAI(api_key=key, timeout=self.timeout_seconds)
                     logger.info("Configured OpenAI Vision client with model: %s", self.settings.vlm_model_name)
                 except Exception as e:
                     logger.warning("Failed to configure AsyncOpenAI: %s", e)
@@ -104,7 +118,11 @@ class VLMService:
         async with self.semaphore:
             start_time = time.perf_counter()
             try:
-                summary = await self._call_vlm_with_retry(path)
+                # Wrap API call with timeout protection
+                summary = await asyncio.wait_for(
+                    self._call_vlm_with_retry(path),
+                    timeout=self.timeout_seconds,
+                )
                 elapsed = time.perf_counter() - start_time
                 logger.debug(
                     "Generated VLM summary for %s in %.2fs (%d chars)",
@@ -145,13 +163,13 @@ class VLMService:
         return await asyncio.gather(*tasks)
 
     async def _call_vlm_with_retry(self, image_path: Path) -> str:
-        """Execute the VLM API call wrapped in exponential backoff."""
+        """Execute the VLM API call with retry restricted strictly to transient network exceptions."""
 
         @retry(
             reraise=True,
             stop=stop_after_attempt(self.settings.vlm_max_retries),
             wait=wait_exponential(multiplier=1, min=2, max=10),
-            retry=retry_if_exception_type((ConnectionError, TimeoutError, Exception)),
+            retry=retry_if_exception_type(TRANSIENT_EXCEPTIONS),
         )
         async def _attempt_call() -> str:
             if self.provider == VLMProvider.GEMINI:
@@ -164,7 +182,7 @@ class VLMService:
         return await _attempt_call()
 
     async def _call_gemini(self, image_path: Path) -> str:
-        """Call Google Gemini 1.5 Flash Vision API."""
+        """Call Google Gemini Vision API."""
         import google.generativeai as genai
         from PIL import Image
 

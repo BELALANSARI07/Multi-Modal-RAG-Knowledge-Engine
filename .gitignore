@@ -86,6 +86,8 @@ data/uploads/*
 !data/uploads/.gitkeep
 data/extracted_images/*
 !data/extracted_images/.gitkeep
+data/*.json
+
 
 # Temporary scratch & log files
 *.log

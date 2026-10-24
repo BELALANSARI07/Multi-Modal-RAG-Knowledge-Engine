@@ -17,6 +17,26 @@ class RAGEngineException(Exception):
         return self.message
 
 
+class SecurityValidationError(RAGEngineException):
+    """Raised when file upload violates security constraints (path traversal, invalid signature)."""
+    pass
+
+
+class DocumentEmptyError(RAGEngineException):
+    """Raised when a PDF contains no extractable text and no valid visual figures."""
+    pass
+
+
+class AuthenticationError(RAGEngineException):
+    """Raised when API key or authorization credentials are missing or invalid."""
+    pass
+
+
+class RateLimitExceededError(RAGEngineException):
+    """Raised when client exceeds the allowed request rate."""
+    pass
+
+
 class PDFParsingError(RAGEngineException):
     """Raised when parsing a PDF fails (e.g., corrupt file, password-protected, unreadable)."""
     pass

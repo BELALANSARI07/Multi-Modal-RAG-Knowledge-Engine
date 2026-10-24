@@ -52,6 +52,7 @@ class TestIngestionPipeline:
             chroma_persist_dir=chroma_dir,
             chroma_collection_name="test_unified_kb",
             extracted_images_dir=img_dir,
+            embedding_dimension=16,
             gemini_api_key=None,  # triggers synthetic visual summary fallback
         )
 

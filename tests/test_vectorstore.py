@@ -14,6 +14,7 @@ def temp_vectorstore(tmp_path: Path) -> VectorStoreService:
     settings = Settings(
         chroma_persist_dir=tmp_path / "chroma_test_db",
         chroma_collection_name="test_knowledge_base",
+        embedding_dimension=4,
     )
     return VectorStoreService(settings=settings)
 
@@ -88,12 +89,12 @@ class TestVectorStoreService:
             {"source_pdf": "b.pdf", "chunk_type": "text"},
             {"source_pdf": "b.pdf", "chunk_type": "image_summary"},
         ]
-        embeddings = [[0.5, 0.5], [0.6, 0.4], [0.1, 0.9]]
+        embeddings = [[0.5, 0.5, 0.0, 0.0], [0.6, 0.4, 0.0, 0.0], [0.1, 0.9, 0.0, 0.0]]
         temp_vectorstore.upsert_documents(ids, docs, metadatas, embeddings)
 
         # Filter strictly for image_summary chunks
         results = temp_vectorstore.query(
-            query_embeddings=[[0.5, 0.5]],
+            query_embeddings=[[0.5, 0.5, 0.0, 0.0]],
             n_results=3,
             where={"chunk_type": "image_summary"},
         )
@@ -107,7 +108,7 @@ class TestVectorStoreService:
         ids = ["doc1_c1", "doc2_c1"]
         docs = ["Doc 1 text", "Doc 2 text"]
         metadatas = [{"source_pdf": "doc1.pdf"}, {"source_pdf": "doc2.pdf"}]
-        embeddings = [[0.1, 0.2], [0.3, 0.4]]
+        embeddings = [[0.1, 0.2, 0.0, 0.0], [0.3, 0.4, 0.0, 0.0]]
         temp_vectorstore.upsert_documents(ids, docs, metadatas, embeddings)
 
         assert temp_vectorstore.count() == 2

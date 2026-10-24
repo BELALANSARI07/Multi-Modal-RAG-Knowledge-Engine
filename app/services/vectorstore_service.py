@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from app.config import Settings, get_settings
 from app.core.exceptions import VectorStoreError
@@ -19,6 +19,7 @@ class VectorStoreService:
         self.settings = settings or get_settings()
         self.persist_dir = ensure_directory(self.settings.chroma_persist_dir)
         self.collection_name = self.settings.chroma_collection_name
+        self.expected_dim = self.settings.embedding_dimension
         self._client = None
         self._collection = None
 
@@ -57,12 +58,19 @@ class VectorStoreService:
         metadatas: List[Dict[str, Any]],
         embeddings: List[List[float]],
     ) -> int:
-        """Upsert a batch of text/image chunks and their embeddings into ChromaDB."""
+        """Upsert a batch of text/image chunks and their embeddings into ChromaDB with dimension validation."""
         if not ids:
             return 0
 
         if not (len(ids) == len(documents) == len(metadatas) == len(embeddings)):
             raise VectorStoreError("Mismatched list lengths in vector store upsert")
+
+        # Validate vector dimensionality before upserting
+        for idx, vec in enumerate(embeddings):
+            if len(vec) != self.expected_dim:
+                raise VectorStoreError(
+                    f"Vector dimension mismatch at index {idx}: expected {self.expected_dim}, got {len(vec)}"
+                )
 
         collection = self._get_collection()
         try:
@@ -99,13 +107,13 @@ class VectorStoreService:
             raise VectorStoreError("Failed to query ChromaDB collection", details=str(e))
 
     def count(self) -> int:
-        """Return the total number of indexed vectors in the collection."""
+        """Return the total number of indexed vectors in the collection with strict error propagation."""
         collection = self._get_collection()
         try:
             return collection.count()
         except Exception as e:
             logger.error("Failed to retrieve collection count: %s", e)
-            return 0
+            raise VectorStoreError(f"Error reading vector collection count: {str(e)}")
 
     def delete_by_source(self, source_pdf: str) -> int:
         """Remove all chunks associated with a specific PDF filename."""
@@ -120,6 +128,15 @@ class VectorStoreService:
         except Exception as e:
             logger.error("Failed to delete records for %s: %s", source_pdf, e)
             raise VectorStoreError(f"Failed to delete records for {source_pdf}", details=str(e))
+
+    def document_exists(self, source_pdf: str) -> bool:
+        """Check if any vectors for a given source PDF already exist."""
+        collection = self._get_collection()
+        try:
+            results = collection.get(where={"source_pdf": source_pdf}, limit=1)
+            return len(results.get("ids", [])) > 0
+        except Exception:
+            return False
 
     def list_ingested_documents(self) -> List[Dict[str, Any]]:
         """Scan collection metadata to compile summaries of all ingested documents."""

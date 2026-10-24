@@ -1,59 +1,85 @@
-"""FastAPI application entrypoint with lifespan management, CORS, and static mounting."""
+"""FastAPI application entrypoint with lifespan management, CORS, middleware, and health probes."""
 
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
-from fastapi import FastAPI, status
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.middleware import RequestIDMiddleware
 from app.api.router import api_router
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.models.schemas import HealthResponse
 from app.services.embedding_service import EmbeddingService
+from app.services.ingestion_service import IngestionService
+from app.services.retrieval_service import RetrievalService
 from app.services.vectorstore_service import VectorStoreService
 from app.services.vlm_service import VLMService
 from app.utils.file_utils import ensure_directory
 from app.utils.logging_config import setup_logging
 
-settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and shutdown hooks."""
+    app_settings = getattr(app.state, "settings", None) or get_settings()
+
     # 1. Initialize structured logging
-    setup_logging(settings.log_level)
+    setup_logging(app_settings.log_level)
+    logger.info("Starting up %s v%s...", app_settings.app_name, app_settings.app_version)
 
     # 2. Ensure application directories exist
-    ensure_directory(settings.upload_dir)
-    ensure_directory(settings.extracted_images_dir)
-    ensure_directory(settings.chroma_persist_dir)
+    ensure_directory(app_settings.upload_dir)
+    ensure_directory(app_settings.extracted_images_dir)
+    ensure_directory(app_settings.chroma_persist_dir)
 
-    # 3. Warm up services
-    vectorstore = VectorStoreService(settings)
+    # 3. Warm up services and store singletons on app.state
+    vectorstore = VectorStoreService(app_settings)
     _ = vectorstore.count()
 
-    embedder = EmbeddingService(settings)
+    embedder = EmbeddingService(app_settings)
     _ = embedder.embedding_dimension
 
-    vlm = VLMService(settings)
+    vlm = VLMService(app_settings)
 
-    # Store shared instances on app state
+    ingestion_service = IngestionService(
+        settings=app_settings,
+        embedding_service=embedder,
+        vlm_service=vlm,
+        vectorstore_service=vectorstore,
+    )
+
+    retrieval_service = RetrievalService(
+        settings=app_settings,
+        embedding_service=embedder,
+        vectorstore_service=vectorstore,
+    )
+
+    app.state.settings = app_settings
     app.state.vectorstore = vectorstore
     app.state.embedder = embedder
     app.state.vlm = vlm
+    app.state.ingestion_service = ingestion_service
+    app.state.retrieval_service = retrieval_service
 
+    logger.info("Application warmup complete. Serving requests.")
     yield
 
     # Shutdown logic
-    pass
+    logger.info("Shutting down %s...", app_settings.app_name)
 
 
-def create_application() -> FastAPI:
+def create_application(custom_settings: Settings = None) -> FastAPI:
     """Application factory configuring middleware, routes, and static file mounts."""
+    app_settings = custom_settings or get_settings()
+
     app = FastAPI(
-        title=settings.app_name,
-        version=settings.app_version,
+        title=app_settings.app_name,
+        version=app_settings.app_version,
         description=(
             "Production-Grade Multi-Modal Retrieval-Augmented Generation (RAG) Knowledge Engine.\n\n"
             "Ingests complex PDFs with text and visual graphics (charts, graphs, diagrams), "
@@ -65,43 +91,61 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # 1. Enable CORS
+    app.state.settings = app_settings
+
+    # 1. Correlation ID Middleware
+    app.add_middleware(RequestIDMiddleware)
+
+    # 2. CORS Middleware with restricted trusted origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=app_settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
-    # 2. Mount static folder for extracted visual images
-    ensure_directory(settings.extracted_images_dir)
+    # 3. Mount static folder for extracted visual images
+    ensure_directory(app_settings.extracted_images_dir)
     app.mount(
         "/static/images",
-        StaticFiles(directory=str(settings.extracted_images_dir)),
+        StaticFiles(directory=str(app_settings.extracted_images_dir)),
         name="images",
     )
 
-    # 3. Include API routes
+    # 4. Include API routes
     app.include_router(api_router)
 
-    # 4. Root Endpoint
+    # 5. Global Exception Handler: Shields internal server traces
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        req_id = getattr(request.state, "request_id", "unknown")
+        logger.exception("Unhandled server exception [Request: %s]: %s", req_id, exc)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": f"An unexpected internal error occurred. Reference: {req_id}",
+                "request_id": req_id,
+            },
+        )
+
+    # 6. Root Endpoint
     @app.get("/", tags=["System"])
     async def root():
         return {
-            "name": settings.app_name,
-            "version": settings.app_version,
+            "name": app_settings.app_name,
+            "version": app_settings.app_version,
             "docs_url": "/docs",
             "health_url": "/health",
             "status": "operational",
         }
 
-    # 5. Diagnostic Health Check Endpoint
+    # 7. Diagnostic Health Probes
     @app.get("/health", response_model=HealthResponse, tags=["System"])
     async def health_check():
-        vectorstore = getattr(app.state, "vectorstore", None) or VectorStoreService(settings)
-        embedder = getattr(app.state, "embedder", None) or EmbeddingService(settings)
-        vlm = getattr(app.state, "vlm", None) or VLMService(settings)
+        vectorstore = getattr(app.state, "vectorstore", None) or VectorStoreService(app_settings)
+        embedder = getattr(app.state, "embedder", None) or EmbeddingService(app_settings)
+        vlm = getattr(app.state, "vlm", None) or VLMService(app_settings)
 
         try:
             total_vecs = vectorstore.count()
@@ -112,14 +156,33 @@ def create_application() -> FastAPI:
 
         return HealthResponse(
             status="healthy" if chroma_ok else "degraded",
-            app_name=settings.app_name,
-            version=settings.app_version,
+            app_name=app_settings.app_name,
+            version=app_settings.app_version,
             chroma_connected=chroma_ok,
             total_indexed_vectors=total_vecs,
             embedding_engine=embedder.engine_type,
-            vlm_provider=settings.vlm_provider,
+            vlm_provider=app_settings.vlm_provider,
             vlm_live=vlm.is_live_configured,
         )
+
+    @app.get("/health/live", tags=["System"])
+    async def liveness_probe():
+        """Kubernetes/Container liveness probe."""
+        return {"status": "alive"}
+
+    @app.get("/health/ready", tags=["System"])
+    async def readiness_probe():
+        """Kubernetes/Container readiness probe verifying ChromaDB and embedding engine."""
+        vectorstore = getattr(app.state, "vectorstore", None) or VectorStoreService(app_settings)
+        try:
+            _ = vectorstore.count()
+            return {"status": "ready"}
+        except Exception as e:
+            logger.error("Readiness probe failed: %s", e)
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "not_ready", "reason": str(e)},
+            )
 
     return app
 

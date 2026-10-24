@@ -1,79 +1,62 @@
-"""FastAPI endpoint integration tests using TestClient."""
+"""FastAPI REST endpoint integration tests using shared fixtures."""
 
-import io
 from pathlib import Path
-import pytest
 from fastapi.testclient import TestClient
-
-from app.config import Settings
-from app.main import create_application
-from tests.test_pdf_parser import create_synthetic_pdf
-
-
-@pytest.fixture(scope="module")
-def client(tmp_path_factory) -> TestClient:
-    """Fixture providing a test client configured with an isolated temporary database."""
-    temp_dir = tmp_path_factory.mktemp("api_test_env")
-    test_settings = Settings(
-        chroma_persist_dir=temp_dir / "chroma_db",
-        chroma_collection_name="test_api_collection",
-        upload_dir=temp_dir / "uploads",
-        extracted_images_dir=temp_dir / "extracted_images",
-        gemini_api_key=None,  # triggers synthetic fallback
-    )
-
-    from app.config import get_settings
-    from app.main import app
-
-    app.dependency_overrides = {}
-    with TestClient(app) as test_client:
-        yield test_client
 
 
 class TestAPIEndpoints:
     """Test suite covering FastAPI REST endpoints."""
 
-    def test_root_endpoint(self, client: TestClient) -> None:
+    def test_root_endpoint(self, test_client: TestClient) -> None:
         """Verify root endpoint returns system status and documentation links."""
-        resp = client.get("/")
+        resp = test_client.get("/")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "operational"
         assert "/docs" in data["docs_url"]
 
-    def test_health_check_endpoint(self, client: TestClient) -> None:
+    def test_health_check_endpoint(self, test_client: TestClient) -> None:
         """Verify /health endpoint returns diagnostic metrics."""
-        resp = client.get("/health")
+        resp = test_client.get("/health")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] in ("healthy", "degraded")
         assert "embedding_engine" in data
         assert "total_indexed_vectors" in data
 
-    def test_ingest_invalid_extension(self, client: TestClient) -> None:
+    def test_health_probes(self, test_client: TestClient) -> None:
+        """Verify /health/live and /health/ready container probes."""
+        live_resp = test_client.get("/health/live")
+        assert live_resp.status_code == 200
+        assert live_resp.json()["status"] == "alive"
+
+        ready_resp = test_client.get("/health/ready")
+        assert ready_resp.status_code == 200
+        assert ready_resp.json()["status"] == "ready"
+
+    def test_ingest_invalid_extension(self, test_client: TestClient) -> None:
         """Verify uploading non-PDF files is rejected with 422 Unprocessable Entity."""
         files = {"file": ("notes.txt", b"plain text content", "text/plain")}
-        resp = client.post("/api/v1/ingest", files=files)
+        resp = test_client.post("/api/v1/ingest", files=files)
         assert resp.status_code == 422
         assert "Only .pdf files are supported" in resp.json()["detail"]
 
-    def test_ingest_empty_file(self, client: TestClient) -> None:
+    def test_ingest_empty_file(self, test_client: TestClient) -> None:
         """Verify uploading empty file buffer is rejected with 400 Bad Request."""
         files = {"file": ("empty.pdf", b"", "application/pdf")}
-        resp = client.post("/api/v1/ingest", files=files)
+        resp = test_client.post("/api/v1/ingest", files=files)
         assert resp.status_code == 400
         assert "empty" in resp.json()["detail"]
 
-    def test_ingest_valid_pdf_and_query_flow(self, client: TestClient, tmp_path: Path) -> None:
-        """Verify full lifecycle: Ingest PDF -> List documents -> Query RAG -> Delete document."""
-        # 1. Generate synthetic test PDF
-        pdf_path = create_synthetic_pdf(tmp_path)
-        with open(pdf_path, "rb") as f:
+    def test_ingest_valid_pdf_and_query_flow(self, test_client: TestClient, synthetic_pdf_path: Path) -> None:
+        """Verify full lifecycle: Ingest PDF -> List documents -> Query RAG -> Delete document with disk cleanup."""
+        # 1. Read synthetic test PDF bytes
+        with open(synthetic_pdf_path, "rb") as f:
             pdf_bytes = f.read()
 
         # 2. Ingest PDF via POST /api/v1/ingest
         files = {"file": ("sample_report.pdf", pdf_bytes, "application/pdf")}
-        ingest_resp = client.post("/api/v1/ingest", files=files)
+        ingest_resp = test_client.post("/api/v1/ingest", files=files)
         assert ingest_resp.status_code == 200
         ingest_data = ingest_resp.json()
         assert ingest_data["status"] == "success"
@@ -87,7 +70,7 @@ class TestAPIEndpoints:
             "top_k": 3,
             "include_sources": True,
         }
-        query_resp = client.post("/api/v1/query", json=query_payload)
+        query_resp = test_client.post("/api/v1/query", json=query_payload)
         assert query_resp.status_code == 200
         q_data = query_resp.json()
         assert "answer" in q_data
@@ -99,7 +82,7 @@ class TestAPIEndpoints:
         assert "text" in chunk_types or "image_summary" in chunk_types
 
         # 4. List documents via GET /api/v1/documents
-        doc_resp = client.get("/api/v1/documents")
+        doc_resp = test_client.get("/api/v1/documents")
         assert doc_resp.status_code == 200
         docs_data = doc_resp.json()
         assert docs_data["total_count"] >= 1
@@ -107,7 +90,7 @@ class TestAPIEndpoints:
         assert "sample_report.pdf" in filenames
 
         # 5. Delete document via DELETE /api/v1/documents/{filename}
-        del_resp = client.delete("/api/v1/documents/sample_report.pdf")
+        del_resp = test_client.delete("/api/v1/documents/sample_report.pdf")
         assert del_resp.status_code == 200
         assert del_resp.json()["status"] == "success"
         assert del_resp.json()["deleted_vectors"] > 0

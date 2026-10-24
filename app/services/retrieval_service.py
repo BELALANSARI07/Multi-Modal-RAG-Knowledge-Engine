@@ -1,14 +1,13 @@
-"""Multi-modal retrieval and generation service (RAG orchestrator)."""
+"""Multi-modal retrieval and generation service (RAG orchestrator) with guardrails."""
 
 import asyncio
 import logging
 import os
-import time
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Optional
 
 from app.config import Settings, get_settings
-from app.models.enums import VLMProvider
 from app.models.schemas import QueryMetadata, QueryRequest, QueryResponse, SourceNode
 from app.services.embedding_service import EmbeddingService
 from app.services.vectorstore_service import VectorStoreService
@@ -42,9 +41,11 @@ class RetrievalService:
         self.settings = settings or get_settings()
         self.embedder = embedding_service or EmbeddingService(self.settings)
         self.vectorstore = vectorstore_service or VectorStoreService(self.settings)
+        self.min_relevance = self.settings.min_relevance_score
+        self.max_context_chars = self.settings.max_context_chars
 
     async def query(self, request: QueryRequest) -> QueryResponse:
-        """Execute end-to-end multi-modal RAG retrieval and answer generation."""
+        """Execute end-to-end multi-modal RAG retrieval and answer generation with guardrails."""
         # 1. Measure Retrieval
         t_retrieval_start = time.perf_counter()
 
@@ -72,6 +73,7 @@ class RetrievalService:
         raw_distances = search_results.get("distances", [[]])[0]
 
         context_segments: List[str] = []
+        accumulated_chars = 0
 
         for idx, (doc_text, meta, dist) in enumerate(zip(raw_documents, raw_metadatas, raw_distances)):
             source_pdf = meta.get("source_pdf", "Unknown")
@@ -81,6 +83,16 @@ class RetrievalService:
 
             # Calculate cosine similarity score from distance
             relevance_score = max(0.0, min(1.0, 1.0 - float(dist)))
+
+            # Guardrail 1: Relevance Score Threshold
+            if relevance_score < self.min_relevance:
+                logger.debug(
+                    "Filtering out chunk from %s (score %.2f < threshold %.2f)",
+                    source_pdf,
+                    relevance_score,
+                    self.min_relevance,
+                )
+                continue
 
             # Build web-accessible URL for static image rendering
             image_url = None
@@ -102,15 +114,23 @@ class RetrievalService:
             sources.append(source_node)
 
             type_label = "Visual Graphic / Chart" if chunk_type == "image_summary" else "Text"
-            context_segments.append(
-                f"[Source: {source_pdf} | Page {page_num} | Content: {type_label}]\n{doc_text}"
-            )
+            segment = f"[Source: {source_pdf} | Page {page_num} | Content: {type_label}]\n{doc_text}"
+
+            # Guardrail 2: Context Window Truncation Protection
+            if accumulated_chars + len(segment) <= self.max_context_chars:
+                context_segments.append(segment)
+                accumulated_chars += len(segment)
+            else:
+                remaining_space = self.max_context_chars - accumulated_chars
+                if remaining_space > 100:
+                    context_segments.append(segment[:remaining_space] + "... [context truncated]")
+                break
 
         # Handle empty context scenario
         if not context_segments:
             return QueryResponse(
                 question=request.question,
-                answer="No relevant documents or visual data were found in the knowledge base to answer your question.",
+                answer="No relevant documents or visual data above the minimum confidence threshold were found to answer your question.",
                 sources=[],
                 metadata=QueryMetadata(
                     model_used="none",
