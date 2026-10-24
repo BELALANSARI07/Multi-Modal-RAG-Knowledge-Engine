@@ -1,0 +1,79 @@
+"""FastAPI endpoints for managing indexed documents in the knowledge base."""
+
+import logging
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from app.models.schemas import DocumentItem, DocumentListResponse
+from app.services.vectorstore_service import VectorStoreService
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/documents", tags=["Document Management"])
+
+
+def get_vectorstore_service() -> VectorStoreService:
+    """Dependency injection provider for VectorStoreService."""
+    return VectorStoreService()
+
+
+@router.get(
+    "",
+    response_model=DocumentListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List all indexed documents",
+    description="Returns metadata breakdown of all ingested documents and their text/image chunk counts.",
+)
+async def list_documents(
+    vectorstore: VectorStoreService = Depends(get_vectorstore_service),
+) -> DocumentListResponse:
+    """List all indexed documents in the ChromaDB collection."""
+    try:
+        raw_docs = vectorstore.list_ingested_documents()
+        items = [
+            DocumentItem(
+                filename=d["filename"],
+                text_chunks=d["text_chunks"],
+                image_chunks=d["image_chunks"],
+                max_page=d["max_page"],
+            )
+            for d in raw_docs
+        ]
+        return DocumentListResponse(documents=items, total_count=len(items))
+    except Exception as e:
+        logger.exception("Failed to retrieve document list: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list documents: {str(e)}",
+        )
+
+
+@router.delete(
+    "/{filename}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete an indexed document by filename",
+    description="Purges all text chunks and visual summary vectors associated with the specified filename.",
+)
+async def delete_document(
+    filename: str,
+    vectorstore: VectorStoreService = Depends(get_vectorstore_service),
+) -> dict:
+    """Remove a document from the vector store."""
+    try:
+        deleted_count = vectorstore.delete_by_source(filename)
+        if deleted_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document '{filename}' not found in the vector store",
+            )
+        return {
+            "status": "success",
+            "message": f"Successfully deleted {deleted_count} vectors for '{filename}'",
+            "deleted_vectors": deleted_count,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to delete document %s: %s", filename, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting document: {str(e)}",
+        )

@@ -1,0 +1,117 @@
+"""PDF parsing and multi-modal extraction engine using PyMuPDF (fitz)."""
+
+import asyncio
+import logging
+from pathlib import Path
+from typing import List, NamedTuple, Optional, Union
+
+import pymupdf as fitz
+
+from app.core.exceptions import PDFParsingError
+from app.core.image_extractor import ImageExtractor
+from app.core.text_chunker import RecursiveTextChunker
+from app.models.schemas import ExtractedImage, TextChunk
+
+logger = logging.getLogger(__name__)
+
+
+class ParsedPDFDocument(NamedTuple):
+    """Container holding extracted multi-modal data from a parsed PDF."""
+
+    source_pdf: str
+    total_pages: int
+    text_chunks: List[TextChunk]
+    extracted_images: List[ExtractedImage]
+
+
+class PDFParser:
+    """Extracts textual content and embedded visuals from PDF files."""
+
+    def __init__(
+        self,
+        text_chunker: Optional[RecursiveTextChunker] = None,
+        image_extractor: Optional[ImageExtractor] = None,
+    ) -> None:
+        self.chunker = text_chunker or RecursiveTextChunker()
+        self.image_extractor = image_extractor or ImageExtractor()
+
+    def parse(self, file_path: Union[str, Path]) -> ParsedPDFDocument:
+        """Synchronously parse a PDF document from disk."""
+        path = Path(file_path)
+        if not path.is_file():
+            raise PDFParsingError(f"File not found: {path}")
+
+        try:
+            doc = fitz.open(str(path))
+        except Exception as e:
+            raise PDFParsingError(f"Failed to open PDF at {path}", details=str(e))
+
+        return self._process_doc(doc, source_pdf=path.name)
+
+    def parse_bytes(self, pdf_bytes: bytes, filename: str) -> ParsedPDFDocument:
+        """Synchronously parse a PDF document from raw in-memory bytes."""
+        if not pdf_bytes:
+            raise PDFParsingError("Cannot parse empty PDF byte buffer")
+
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        except Exception as e:
+            raise PDFParsingError(f"Failed to parse PDF stream for {filename}", details=str(e))
+
+        return self._process_doc(doc, source_pdf=filename)
+
+    async def parse_async(self, file_path: Union[str, Path]) -> ParsedPDFDocument:
+        """Asynchronously parse a PDF document by offloading CPU work to a thread pool."""
+        return await asyncio.to_thread(self.parse, file_path)
+
+    async def parse_bytes_async(self, pdf_bytes: bytes, filename: str) -> ParsedPDFDocument:
+        """Asynchronously parse PDF bytes by offloading CPU work to a thread pool."""
+        return await asyncio.to_thread(self.parse_bytes, pdf_bytes, filename)
+
+    def _process_doc(self, doc: fitz.Document, source_pdf: str) -> ParsedPDFDocument:
+        """Iterate through pages to extract text chunks and visual elements."""
+        try:
+            if doc.is_encrypted:
+                raise PDFParsingError(f"PDF {source_pdf} is encrypted and password-protected")
+
+            total_pages = len(doc)
+            if total_pages == 0:
+                raise PDFParsingError(f"PDF {source_pdf} contains no pages")
+
+            all_chunks: List[TextChunk] = []
+            all_images: List[ExtractedImage] = []
+            global_chunk_idx = 0
+
+            for page_index in range(total_pages):
+                page_number = page_index + 1
+                page = doc.load_page(page_index)
+
+                # 1. Extract and chunk textual content
+                page_text = page.get_text("text") or ""
+                if page_text.strip():
+                    page_chunks = self.chunker.chunk_page_text(
+                        text=page_text,
+                        source_pdf=source_pdf,
+                        page_number=page_number,
+                        start_chunk_index=global_chunk_idx,
+                    )
+                    all_chunks.extend(page_chunks)
+                    global_chunk_idx += len(page_chunks)
+
+                # 2. Extract visual elements (raster images/charts)
+                page_images = self.image_extractor.extract_from_page(
+                    doc=doc,
+                    page=page,
+                    source_pdf=source_pdf,
+                    page_number=page_number,
+                )
+                all_images.extend(page_images)
+
+            return ParsedPDFDocument(
+                source_pdf=source_pdf,
+                total_pages=total_pages,
+                text_chunks=all_chunks,
+                extracted_images=all_images,
+            )
+        finally:
+            doc.close()

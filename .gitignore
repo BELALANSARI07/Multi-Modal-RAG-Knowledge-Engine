@@ -1,0 +1,93 @@
+# ============================================================
+# Multi-Modal RAG Knowledge Engine — .gitignore
+# ============================================================
+
+# --- Byte-compiled / Optimized / DLL files ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dll
+*.dylib
+
+# --- C extensions / Builds ---
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Virtual Environments ---
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Environment Variables & Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Testing & Quality Assurance ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# --- IDEs & Code Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# --- OS Specific Files ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# --- Model & Framework Caches ---
+.cache/
+hf_models/
+onnx_models/
+
+# --- Runtime Data & Databases ---
+# Keep directory structure via .gitkeep but ignore dynamic uploads/images/db
+chroma_db/
+data/uploads/*
+!data/uploads/.gitkeep
+data/extracted_images/*
+!data/extracted_images/.gitkeep
+
+# Temporary scratch & log files
+*.log
+scratch/
+tmp/
