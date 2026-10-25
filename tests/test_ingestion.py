@@ -2,7 +2,6 @@
 
 import asyncio
 from pathlib import Path
-import pytest
 
 from app.config import Settings
 from app.core.image_extractor import ImageExtractor

@@ -1,9 +1,9 @@
 """Security, authentication, rate limiting, and defensive validation tests."""
 
 from pathlib import Path
-from fastapi.testclient import TestClient
+
 import pymupdf as fitz
-import pytest
+from fastapi.testclient import TestClient
 
 from app.utils.file_utils import sanitize_filename, validate_pdf_signature
 

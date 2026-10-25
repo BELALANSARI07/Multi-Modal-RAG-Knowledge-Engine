@@ -2,10 +2,11 @@
 
 import io
 from pathlib import Path
-from PIL import Image
+
 import pymupdf as fitz
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.config import Settings
 from app.main import create_application

@@ -2,7 +2,6 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,9 +18,9 @@ class Settings(BaseSettings):
     log_format: str = "text"  # "text" or "json"
 
     # --- Security & Authentication ---
-    api_key: Optional[str] = None  # If set, enforces X-API-Key on mutating/query endpoints
+    api_key: str | None = None  # If set, enforces X-API-Key on mutating/query endpoints
     api_key_header_name: str = "X-API-Key"
-    cors_origins: List[str] = [
+    cors_origins: list[str] = [
         "http://localhost:3000",
         "http://localhost:8000",
         "http://127.0.0.1:3000",
@@ -34,8 +33,8 @@ class Settings(BaseSettings):
 
     # --- VLM / LLM API ---
     vlm_provider: str = "gemini"  # "gemini" or "openai"
-    gemini_api_key: Optional[str] = None
-    openai_api_key: Optional[str] = None
+    gemini_api_key: str | None = None
+    openai_api_key: str | None = None
     vlm_model_name: str = "gemini-1.5-flash"
     vlm_max_concurrent: int = 5
     vlm_max_retries: int = 3
@@ -82,7 +81,7 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Return a cached instance of application settings."""
     return Settings()

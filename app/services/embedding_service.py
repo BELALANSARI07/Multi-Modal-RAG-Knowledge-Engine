@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from typing import List, Optional
 
 from app.config import Settings, get_settings
 from app.core.exceptions import EmbeddingError
@@ -12,12 +11,12 @@ logger = logging.getLogger(__name__)
 
 class EmbeddingService:
     """Manages local sentence embedding generation with batching and async thread offloading.
-    
+
     Supports SentenceTransformer with transparent fallback to ONNX Runtime (all-MiniLM-L6-v2)
     to guarantee flawless operation across secure Windows environments.
     """
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.model_name = self.settings.embedding_model_name
         self.batch_size = self.settings.embedding_batch_size
@@ -75,7 +74,7 @@ class EmbeddingService:
         """Return which engine is currently active ('sentence_transformers' or 'onnx')."""
         return self._engine_type
 
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Synchronously generate embeddings for a batch of text strings."""
         if not texts:
             return []
@@ -98,17 +97,17 @@ class EmbeddingService:
         except Exception as e:
             raise EmbeddingError("Batch text embedding failed", details=str(e))
 
-    def embed_single(self, text: str) -> List[float]:
+    def embed_single(self, text: str) -> list[float]:
         """Generate embedding vector for a single text input."""
         results = self.embed_texts([text])
         if not results:
             raise EmbeddingError("Failed to embed single text input")
         return results[0]
 
-    async def embed_texts_async(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts_async(self, texts: list[str]) -> list[list[float]]:
         """Asynchronously generate embeddings for a batch of texts in a worker thread."""
         return await asyncio.to_thread(self.embed_texts, texts)
 
-    async def embed_single_async(self, text: str) -> List[float]:
+    async def embed_single_async(self, text: str) -> list[float]:
         """Asynchronously generate embedding for a single text in a worker thread."""
         return await asyncio.to_thread(self.embed_single, text)

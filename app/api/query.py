@@ -1,6 +1,7 @@
 """FastAPI endpoint for multi-modal question answering and retrieval."""
 
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.dependencies import get_retrieval_service

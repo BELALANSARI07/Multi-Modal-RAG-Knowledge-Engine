@@ -1,6 +1,7 @@
 """FastAPI endpoint for multi-modal PDF document ingestion."""
 
 import logging
+
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 
 from app.api.dependencies import get_ingestion_service

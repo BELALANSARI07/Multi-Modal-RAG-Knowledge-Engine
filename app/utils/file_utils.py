@@ -1,10 +1,8 @@
 """Filesystem, security sanitization, and hashing utilities."""
 
 import hashlib
-from pathlib import Path, PurePath
 import re
-from typing import Optional, Union
-
+from pathlib import Path, PurePath
 
 PDF_MAGIC_BYTES = b"%PDF-"
 
@@ -18,7 +16,7 @@ def validate_pdf_signature(content: bytes) -> bool:
     return PDF_MAGIC_BYTES in header
 
 
-def ensure_directory(path: Union[str, Path]) -> Path:
+def ensure_directory(path: str | Path) -> Path:
     """Ensure that a directory exists, creating parents if necessary."""
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
@@ -27,7 +25,7 @@ def ensure_directory(path: Union[str, Path]) -> Path:
 
 def sanitize_filename(name: str) -> str:
     """Strictly sanitize filename against path traversal (../, ..\\), null bytes, and unsafe characters.
-    
+
     Guarantees that the returned string is purely a filename with no directory components.
     """
     if not name:
@@ -62,7 +60,7 @@ def compute_file_hash(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
 
 
-def generate_document_id(filename: str, file_hash: Optional[str] = None) -> str:
+def generate_document_id(filename: str, file_hash: str | None = None) -> str:
     """Generate a clean document ID combining sanitized name and unique hash."""
     base = sanitize_filename(filename).removesuffix(".pdf")
     if file_hash:

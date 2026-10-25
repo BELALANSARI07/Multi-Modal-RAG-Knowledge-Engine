@@ -3,9 +3,9 @@
 import asyncio
 import logging
 import os
-from pathlib import Path
 import time
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any
 
 from app.config import Settings, get_settings
 from app.models.schemas import QueryMetadata, QueryRequest, QueryResponse, SourceNode
@@ -34,9 +34,9 @@ class RetrievalService:
 
     def __init__(
         self,
-        settings: Optional[Settings] = None,
-        embedding_service: Optional[EmbeddingService] = None,
-        vectorstore_service: Optional[VectorStoreService] = None,
+        settings: Settings | None = None,
+        embedding_service: EmbeddingService | None = None,
+        vectorstore_service: VectorStoreService | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.embedder = embedding_service or EmbeddingService(self.settings)
@@ -53,7 +53,7 @@ class RetrievalService:
         query_vector = await self.embedder.embed_single_async(request.question)
 
         # Build metadata filter if filter_source is specified
-        where_filter: Optional[Dict[str, Any]] = None
+        where_filter: dict[str, Any] | None = None
         if request.filter_source:
             where_filter = {"source_pdf": request.filter_source}
 
@@ -67,12 +67,12 @@ class RetrievalService:
         retrieval_elapsed_ms = (time.perf_counter() - t_retrieval_start) * 1000.0
 
         # Parse retrieved matches
-        sources: List[SourceNode] = []
+        sources: list[SourceNode] = []
         raw_documents = search_results.get("documents", [[]])[0]
         raw_metadatas = search_results.get("metadatas", [[]])[0]
         raw_distances = search_results.get("distances", [[]])[0]
 
-        context_segments: List[str] = []
+        context_segments: list[str] = []
         accumulated_chars = 0
 
         for idx, (doc_text, meta, dist) in enumerate(zip(raw_documents, raw_metadatas, raw_distances)):
@@ -166,7 +166,7 @@ class RetrievalService:
     async def _generate_answer(
         self,
         prompt: str,
-        context_segments: List[str],
+        context_segments: list[str],
         question: str,
     ) -> tuple[str, str]:
         """Synthesize answer using configured LLM or intelligent grounded fallback."""

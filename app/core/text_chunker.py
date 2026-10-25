@@ -1,6 +1,5 @@
 """Recursive character-based text chunker with sliding window overlap."""
 
-from typing import List, Optional
 
 from app.core.exceptions import ChunkingError
 from app.models.enums import ChunkType
@@ -17,7 +16,7 @@ class RecursiveTextChunker:
         self,
         chunk_size: int = 512,
         chunk_overlap: int = 64,
-        separators: Optional[List[str]] = None,
+        separators: list[str] | None = None,
     ) -> None:
         if chunk_size <= 0:
             raise ChunkingError("chunk_size must be a positive integer")
@@ -30,9 +29,9 @@ class RecursiveTextChunker:
         self.chunk_overlap = chunk_overlap
         self.separators = separators or self.DEFAULT_SEPARATORS
 
-    def _split_text(self, text: str, separators: List[str]) -> List[str]:
+    def _split_text(self, text: str, separators: list[str]) -> list[str]:
         """Recursively split text using the first viable separator in separators."""
-        final_chunks: List[str] = []
+        final_chunks: list[str] = []
         text = text.strip()
         if not text:
             return final_chunks
@@ -41,8 +40,8 @@ class RecursiveTextChunker:
             return [text]
 
         # Find the highest-priority separator present in text
-        chosen_sep: Optional[str] = None
-        remaining_seps: List[str] = []
+        chosen_sep: str | None = None
+        remaining_seps: list[str] = []
         for i, sep in enumerate(separators):
             if sep in text:
                 chosen_sep = sep
@@ -54,7 +53,7 @@ class RecursiveTextChunker:
             return self._hard_split(text)
 
         splits = text.split(chosen_sep)
-        good_splits: List[str] = []
+        good_splits: list[str] = []
 
         for s in splits:
             s_stripped = s.strip()
@@ -73,9 +72,9 @@ class RecursiveTextChunker:
         # Recombine splits respecting chunk_size and chunk_overlap
         return self._merge_splits(good_splits, chosen_sep)
 
-    def _hard_split(self, text: str) -> List[str]:
+    def _hard_split(self, text: str) -> list[str]:
         """Split text rigidly by characters with overlap when no delimiters exist."""
-        chunks: List[str] = []
+        chunks: list[str] = []
         start = 0
         text_len = len(text)
         step = self.chunk_size - self.chunk_overlap
@@ -90,10 +89,10 @@ class RecursiveTextChunker:
             start += step
         return chunks
 
-    def _merge_splits(self, splits: List[str], separator: str) -> List[str]:
+    def _merge_splits(self, splits: list[str], separator: str) -> list[str]:
         """Merge smaller fragments together up to chunk_size with sliding overlap."""
-        merged: List[str] = []
-        current_chunk: List[str] = []
+        merged: list[str] = []
+        current_chunk: list[str] = []
         current_len = 0
 
         for segment in splits:
@@ -109,7 +108,7 @@ class RecursiveTextChunker:
                     if joined:
                         merged.append(joined)
                     # Start next chunk with overlap from the tail of current_chunk
-                    overlap_acc: List[str] = []
+                    overlap_acc: list[str] = []
                     overlap_len = 0
                     for prev_seg in reversed(current_chunk):
                         if overlap_len + len(prev_seg) + len(separator) <= self.chunk_overlap:
@@ -136,13 +135,13 @@ class RecursiveTextChunker:
         source_pdf: str,
         page_number: int,
         start_chunk_index: int = 0,
-    ) -> List[TextChunk]:
+    ) -> list[TextChunk]:
         """Splits raw text from a PDF page into a list of structured TextChunk instances."""
         if not text or not text.strip():
             return []
 
         raw_chunks = self._split_text(text, self.separators)
-        results: List[TextChunk] = []
+        results: list[TextChunk] = []
 
         for idx, chunk_str in enumerate(raw_chunks):
             chunk_idx = start_chunk_index + idx

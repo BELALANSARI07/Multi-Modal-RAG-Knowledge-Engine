@@ -5,19 +5,16 @@ import io
 import sys
 from pathlib import Path
 
-# Add project root to sys.path
+# Add project root to sys.path so app modules are importable.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from PIL import Image, ImageDraw, ImageFont
-import pymupdf as fitz
+import pymupdf as fitz  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
-from app.core.pdf_parser import PDFParser
-from app.services.embedding_service import EmbeddingService
-from app.services.ingestion_service import IngestionService
-from app.services.vectorstore_service import VectorStoreService
-from app.services.vlm_service import VLMService
-from app.utils.file_utils import ensure_directory
+from app.core.pdf_parser import PDFParser  # noqa: E402
+from app.services.ingestion_service import IngestionService  # noqa: E402
+from app.utils.file_utils import ensure_directory  # noqa: E402
 
 
 def generate_sample_report(output_path: Path) -> Path:

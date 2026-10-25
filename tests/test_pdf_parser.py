@@ -3,9 +3,10 @@
 import asyncio
 import io
 from pathlib import Path
-from PIL import Image
+
 import pymupdf as fitz
 import pytest
+from PIL import Image
 
 from app.core.exceptions import PDFParsingError
 from app.core.image_extractor import ImageExtractor

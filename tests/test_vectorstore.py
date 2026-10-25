@@ -1,10 +1,10 @@
 """Unit and integration tests for ChromaDB VectorStoreService."""
 
 from pathlib import Path
+
 import pytest
 
 from app.config import Settings
-from app.core.exceptions import VectorStoreError
 from app.services.vectorstore_service import VectorStoreService
 
 

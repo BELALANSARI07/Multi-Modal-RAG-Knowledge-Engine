@@ -1,10 +1,9 @@
 """Security middleware and dependency injection for API authentication and rate limiting."""
 
-from collections import defaultdict
 import logging
 import time
-from typing import Dict, List, Optional
 import uuid
+from collections import defaultdict
 
 from fastapi import HTTPException, Request, Security, status
 from fastapi.security.api_key import APIKeyHeader
@@ -35,9 +34,9 @@ class InMemoryRateLimiter:
     def __init__(self, requests_per_minute: int = 60, enabled: bool = True) -> None:
         self.default_rpm = requests_per_minute
         self.enabled = enabled
-        self._requests: Dict[str, List[float]] = defaultdict(list)
+        self._requests: dict[str, list[float]] = defaultdict(list)
 
-    def is_allowed(self, client_ip: str, rpm: Optional[int] = None) -> bool:
+    def is_allowed(self, client_ip: str, rpm: int | None = None) -> bool:
         if not self.enabled:
             return True
 
@@ -82,7 +81,7 @@ async def check_rate_limit(request: Request) -> None:
 async def verify_api_key(
     request: Request,
     api_key_from_header: str = Security(api_key_header),
-) -> Optional[str]:
+) -> str | None:
     """FastAPI dependency enforcing API Key authentication if configured in settings."""
     app_settings = getattr(request.app.state, "settings", settings)
     if not app_settings.api_key:

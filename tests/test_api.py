@@ -1,6 +1,7 @@
 """FastAPI REST endpoint integration tests using shared fixtures."""
 
 from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 

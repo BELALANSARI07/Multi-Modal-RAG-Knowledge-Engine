@@ -6,7 +6,6 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import List, Optional, Union
 
 import httpx
 from tenacity import (
@@ -51,7 +50,7 @@ TRANSIENT_EXCEPTIONS = (
 class VLMService:
     """Orchestrates image summarization requests against Gemini or OpenAI Vision APIs."""
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.provider = VLMProvider(self.settings.vlm_provider.lower())
         self.semaphore = asyncio.Semaphore(self.settings.vlm_max_concurrent)
@@ -101,7 +100,7 @@ class VLMService:
 
     async def summarize_image(
         self,
-        image_path: Union[str, Path],
+        image_path: str | Path,
         source_pdf: str = "",
         page_number: int = 1,
     ) -> str:
@@ -144,8 +143,8 @@ class VLMService:
 
     async def summarize_extracted_images(
         self,
-        images: List[ExtractedImage],
-    ) -> List[ExtractedImage]:
+        images: list[ExtractedImage],
+    ) -> list[ExtractedImage]:
         """Process a list of ExtractedImage instances concurrently and populate vlm_summary."""
         if not images:
             return []

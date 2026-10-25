@@ -1,6 +1,7 @@
 """FastAPI endpoints for managing indexed documents in the knowledge base."""
 
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.dependencies import get_ingestion_service, get_vectorstore_service

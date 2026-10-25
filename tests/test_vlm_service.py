@@ -9,7 +9,6 @@ from PIL import Image
 
 from app.config import Settings
 from app.core.exceptions import VLMServiceError
-from app.models.enums import VLMProvider
 from app.models.schemas import ExtractedImage
 from app.services.vlm_service import VLM_SYSTEM_PROMPT, VLMService
 
@@ -78,7 +77,7 @@ class TestVLMService:
             vlm_model_name="gemini-1.5-flash",
         )
 
-        with patch("google.generativeai.configure") as mock_conf, patch(
+        with patch("google.generativeai.configure"), patch(
             "google.generativeai.GenerativeModel"
         ) as mock_model_cls:
             mock_model_instance = MagicMock()

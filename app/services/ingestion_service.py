@@ -1,14 +1,12 @@
 """End-to-end multi-modal ingestion pipeline orchestrator with transactional rollback."""
 
-from datetime import datetime, timezone
 import json
 import logging
-from pathlib import Path
 import shutil
-from typing import Dict, List, Optional, Union
+from datetime import datetime, timezone
+from pathlib import Path
 
 from app.config import Settings, get_settings
-from app.core.exceptions import RAGEngineException
 from app.core.pdf_parser import PDFParser
 from app.models.enums import ChunkType
 from app.models.schemas import DocumentMetadata, IngestedDocumentStats, IngestionResult
@@ -30,11 +28,11 @@ class IngestionService:
 
     def __init__(
         self,
-        settings: Optional[Settings] = None,
-        pdf_parser: Optional[PDFParser] = None,
-        vlm_service: Optional[VLMService] = None,
-        embedding_service: Optional[EmbeddingService] = None,
-        vectorstore_service: Optional[VectorStoreService] = None,
+        settings: Settings | None = None,
+        pdf_parser: PDFParser | None = None,
+        vlm_service: VLMService | None = None,
+        embedding_service: EmbeddingService | None = None,
+        vectorstore_service: VectorStoreService | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.pdf_parser = pdf_parser or PDFParser()
@@ -45,8 +43,8 @@ class IngestionService:
 
     async def ingest_file(
         self,
-        file_path: Union[str, Path],
-        original_filename: Optional[str] = None,
+        file_path: str | Path,
+        original_filename: str | None = None,
     ) -> IngestionResult:
         """Execute full multimodal ingestion pipeline for a PDF on disk with transactional rollback."""
         path = Path(file_path)
@@ -92,9 +90,9 @@ class IngestionService:
             summarized_images = await self.vlm_service.summarize_extracted_images(parsed_doc.extracted_images)
 
             # 4. Assemble unified vectorization payload
-            ids: List[str] = []
-            documents: List[str] = []
-            metadatas: List[dict] = []
+            ids: list[str] = []
+            documents: list[str] = []
+            metadatas: list[dict] = []
 
             # Add plain text chunks
             for chunk in parsed_doc.text_chunks:
@@ -251,18 +249,18 @@ class IngestionService:
             except Exception as e:
                 logger.warning("Rollback image directory cleanup warning: %s", e)
 
-    def _load_registry(self) -> Dict[str, dict]:
+    def _load_registry(self) -> dict[str, dict]:
         """Load document metadata registry from JSON."""
         if not self.registry_file.exists():
             return {}
         try:
-            with open(self.registry_file, "r", encoding="utf-8") as f:
+            with open(self.registry_file, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             logger.warning("Failed to read document registry: %s", e)
             return {}
 
-    def _get_registry_entry(self, filename: str) -> Optional[DocumentMetadata]:
+    def _get_registry_entry(self, filename: str) -> DocumentMetadata | None:
         """Fetch metadata for a document if recorded."""
         data = self._load_registry()
         raw = data.get(filename)

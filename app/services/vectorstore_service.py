@@ -2,8 +2,7 @@
 
 import asyncio
 import logging
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.config import Settings, get_settings
 from app.core.exceptions import VectorStoreError
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 class VectorStoreService:
     """Manages persistent vector indexing, similarity queries, and metadata filtering in ChromaDB."""
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.persist_dir = ensure_directory(self.settings.chroma_persist_dir)
         self.collection_name = self.settings.chroma_collection_name
@@ -53,10 +52,10 @@ class VectorStoreService:
 
     def upsert_documents(
         self,
-        ids: List[str],
-        documents: List[str],
-        metadatas: List[Dict[str, Any]],
-        embeddings: List[List[float]],
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, Any]],
+        embeddings: list[list[float]],
     ) -> int:
         """Upsert a batch of text/image chunks and their embeddings into ChromaDB with dimension validation."""
         if not ids:
@@ -88,10 +87,10 @@ class VectorStoreService:
 
     def query(
         self,
-        query_embeddings: List[List[float]],
+        query_embeddings: list[list[float]],
         n_results: int = 5,
-        where: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        where: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Query the collection by embedding vectors with optional metadata filtering."""
         collection = self._get_collection()
         try:
@@ -138,7 +137,7 @@ class VectorStoreService:
         except Exception:
             return False
 
-    def list_ingested_documents(self) -> List[Dict[str, Any]]:
+    def list_ingested_documents(self) -> list[dict[str, Any]]:
         """Scan collection metadata to compile summaries of all ingested documents."""
         collection = self._get_collection()
         try:
@@ -149,7 +148,7 @@ class VectorStoreService:
             results = collection.get(include=["metadatas"])
             metadatas = results.get("metadatas", [])
 
-            docs_map: Dict[str, Dict[str, Any]] = {}
+            docs_map: dict[str, dict[str, Any]] = {}
             for meta in metadatas:
                 source = meta.get("source_pdf", "unknown")
                 chunk_type = meta.get("chunk_type", "text")
@@ -187,19 +186,19 @@ class VectorStoreService:
 
     async def upsert_documents_async(
         self,
-        ids: List[str],
-        documents: List[str],
-        metadatas: List[Dict[str, Any]],
-        embeddings: List[List[float]],
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, Any]],
+        embeddings: list[list[float]],
     ) -> int:
         """Asynchronous wrapper for document upserts."""
         return await asyncio.to_thread(self.upsert_documents, ids, documents, metadatas, embeddings)
 
     async def query_async(
         self,
-        query_embeddings: List[List[float]],
+        query_embeddings: list[list[float]],
         n_results: int = 5,
-        where: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        where: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Asynchronous wrapper for vector queries."""
         return await asyncio.to_thread(self.query, query_embeddings, n_results, where)

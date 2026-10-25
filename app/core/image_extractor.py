@@ -4,10 +4,9 @@ import hashlib
 import io
 import logging
 from pathlib import Path
-from typing import List, Set, Union
 
-from PIL import Image
 import pymupdf as fitz
+from PIL import Image
 
 from app.models.schemas import ExtractedImage
 from app.utils.file_utils import ensure_directory, generate_image_id, sanitize_filename
@@ -20,7 +19,7 @@ class ImageExtractor:
 
     def __init__(
         self,
-        output_dir: Union[str, Path] = "./data/extracted_images",
+        output_dir: str | Path = "./data/extracted_images",
         min_dimension: int = 100,
         max_dimension: int = 2048,
         default_format: str = "png",
@@ -29,7 +28,7 @@ class ImageExtractor:
         self.min_dimension = min_dimension
         self.max_dimension = max_dimension
         self.default_format = default_format.lower()
-        self._seen_image_hashes: Set[str] = set()
+        self._seen_image_hashes: set[str] = set()
 
     def reset_deduplication(self) -> None:
         """Clear cached image hashes for a new document parsing run."""
@@ -41,9 +40,9 @@ class ImageExtractor:
         page: fitz.Page,
         source_pdf: str,
         page_number: int,
-    ) -> List[ExtractedImage]:
+    ) -> list[ExtractedImage]:
         """Extract embedded raster images from a single PDF page."""
-        extracted: List[ExtractedImage] = []
+        extracted: list[ExtractedImage] = []
         doc_folder_name = sanitize_filename(source_pdf).removesuffix(".pdf")
         page_save_dir = ensure_directory(self.output_dir / doc_folder_name)
 

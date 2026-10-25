@@ -1,12 +1,11 @@
 """Custom exception hierarchy for the Multi-Modal RAG Knowledge Engine."""
 
-from typing import Optional
 
 
 class RAGEngineException(Exception):
     """Base exception for all domain errors within the application."""
 
-    def __init__(self, message: str, details: Optional[str] = None):
+    def __init__(self, message: str, details: str | None = None):
         super().__init__(message)
         self.message = message
         self.details = details

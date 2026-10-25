@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import List, NamedTuple, Optional, Union
+from typing import NamedTuple
 
 import pymupdf as fitz
 
@@ -21,8 +21,8 @@ class ParsedPDFDocument(NamedTuple):
 
     source_pdf: str
     total_pages: int
-    text_chunks: List[TextChunk]
-    extracted_images: List[ExtractedImage]
+    text_chunks: list[TextChunk]
+    extracted_images: list[ExtractedImage]
 
 
 class PDFParser:
@@ -30,13 +30,13 @@ class PDFParser:
 
     def __init__(
         self,
-        text_chunker: Optional[RecursiveTextChunker] = None,
-        image_extractor: Optional[ImageExtractor] = None,
+        text_chunker: RecursiveTextChunker | None = None,
+        image_extractor: ImageExtractor | None = None,
     ) -> None:
         self.chunker = text_chunker or RecursiveTextChunker()
         self.image_extractor = image_extractor or ImageExtractor()
 
-    def parse(self, file_path: Union[str, Path]) -> ParsedPDFDocument:
+    def parse(self, file_path: str | Path) -> ParsedPDFDocument:
         """Synchronously parse a PDF document from disk with signature validation."""
         path = Path(file_path)
         if not path.is_file():
@@ -77,7 +77,7 @@ class PDFParser:
         clean_filename = sanitize_filename(filename)
         return self._process_doc(doc, source_pdf=clean_filename)
 
-    async def parse_async(self, file_path: Union[str, Path]) -> ParsedPDFDocument:
+    async def parse_async(self, file_path: str | Path) -> ParsedPDFDocument:
         """Asynchronously parse a PDF document by offloading CPU work to a thread pool."""
         return await asyncio.to_thread(self.parse, file_path)
 
@@ -96,8 +96,8 @@ class PDFParser:
             if total_pages == 0:
                 raise PDFParsingError(f"PDF '{source_pdf}' contains no pages")
 
-            all_chunks: List[TextChunk] = []
-            all_images: List[ExtractedImage] = []
+            all_chunks: list[TextChunk] = []
+            all_images: list[ExtractedImage] = []
             global_chunk_idx = 0
 
             for page_index in range(total_pages):

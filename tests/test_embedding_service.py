@@ -1,6 +1,7 @@
 """Integration tests for EmbeddingService with sentence-transformers."""
 
 import pytest
+
 from app.config import Settings
 from app.services.embedding_service import EmbeddingService
 
