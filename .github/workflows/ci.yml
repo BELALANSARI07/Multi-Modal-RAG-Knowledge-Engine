@@ -70,4 +70,11 @@ jobs:
           DEBUG: "false"
           VLM_PROVIDER: "gemini"
         run: |
-          pytest tests/ -v --tb=short
+          pytest tests/ -v --tb=short 2>&1 | tee pytest_output.txt || true
+          echo "### Test Output (${{ matrix.python-version }})" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          tail -n 60 pytest_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          if grep -E "(FAILED|ERROR)" pytest_output.txt; then
+            exit 1
+          fi
