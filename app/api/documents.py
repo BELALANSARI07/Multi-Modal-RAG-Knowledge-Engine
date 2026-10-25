@@ -23,9 +23,11 @@ router = APIRouter(prefix="/documents", tags=["Document Management"])
     dependencies=[Depends(verify_api_key)],
 )
 async def list_documents(
+    request: Request,
     vectorstore: VectorStoreService = Depends(get_vectorstore_service),
 ) -> DocumentListResponse:
     """List all indexed documents in the ChromaDB collection."""
+    req_id = getattr(request.state, "request_id", "unknown")
     try:
         raw_docs = vectorstore.list_ingested_documents()
         items = [
@@ -39,10 +41,11 @@ async def list_documents(
         ]
         return DocumentListResponse(documents=items, total_count=len(items))
     except Exception as e:
-        logger.exception("Failed to retrieve document list: %s", e)
+        logger.exception("Failed to retrieve document list [Request: %s]: %s", req_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list documents: {str(e)}",
+            detail=f"An internal error occurred while listing documents. Reference: {req_id}",
+            headers={"X-Request-ID": req_id},
         )
 
 
@@ -66,6 +69,7 @@ async def delete_document(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Document '{filename}' not found in the vector store",
+                headers={"X-Request-ID": req_id},
             )
         return {
             "status": "success",
@@ -78,5 +82,6 @@ async def delete_document(
         logger.exception("Failed to delete document %s [Request: %s]: %s", filename, req_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting document: {str(e)}",
+            detail=f"An internal error occurred while deleting the document. Reference: {req_id}",
+            headers={"X-Request-ID": req_id},
         )

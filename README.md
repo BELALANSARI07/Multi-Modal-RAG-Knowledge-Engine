@@ -177,18 +177,23 @@ Edit `.env` to configure your settings:
 ```ini
 # Core Configuration
 VLM_PROVIDER=gemini                     # "gemini" or "openai"
-GEMINI_API_KEY=your_gemini_api_key      # Required for live Gemini calls
+GEMINI_API_KEY=your_gemini_api_key      # Required for live Gemini VLM calls
+OPENAI_API_KEY=your_openai_api_key      # Required for live OpenAI VLM calls
 VLM_MODEL_NAME=gemini-1.5-flash
 CHROMA_PERSIST_DIR=./chroma_db
 CHROMA_COLLECTION_NAME=knowledge_base
 
-# Security (Optional)
+# Security & Rate Limiting
 API_KEY=                                # Leave empty to disable authentication
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_REQUESTS_PER_MINUTE=60
+RATE_LIMIT_BACKEND=memory               # "memory" (process-local) or "redis" (multi-worker)
+REDIS_URL=                              # e.g., redis://localhost:6379/0 (if using redis backend)
 ```
 
-*(Note: If no API key is provided, the engine automatically operates in offline development mode using deterministic synthetic summaries, allowing full local testing without API costs).*
+> **Live vs. Offline Local Fallback:**
+> - **Live Mode:** Provide a valid `GEMINI_API_KEY` (or `OPENAI_API_KEY`) to enable live multi-modal visual summarization and answer generation.
+> - **Offline Fallback Mode:** When API keys are left unset or placeholder values (`your_...`), the engine automatically switches to a deterministic, zero-cost local grounded synthesizer and structured visual description generator. This allows end-to-end integration testing and offline development without external API costs or internet dependency.
 
 ### 3. Run the Demonstration Seed Script
 
@@ -210,9 +215,15 @@ Interactive OpenAPI Swagger UI is available at `http://127.0.0.1:8000/docs`.
 
 ## 🐳 Docker Deployment
 
+The application includes a production-ready, **multi-stage Dockerfile** that builds isolated binary wheels in a builder stage and executes in a hardened runner container under a dedicated non-root user (`appuser`, UID 1000).
+
 To launch the complete engine inside Docker with persistent volumes for ChromaDB and uploads:
 
 ```bash
+# 1. Initialize environment configuration
+cp .env.example .env
+
+# 2. Build and launch container
 docker compose up --build -d
 ```
 
@@ -222,6 +233,16 @@ Check container status and logs:
 docker compose ps
 docker compose logs -f
 ```
+
+Verify container readiness and health probes:
+
+```bash
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready
+```
+
+> **Multi-Worker Concurrency Note:**
+> By default, the production container runs with 1 Uvicorn worker. In-process ChromaDB utilizes an embedded SQLite database which is optimized for single-process write access. Furthermore, the default `memory` rate limiter is process-local. If scaling to multiple workers or multi-container clusters, configure `RATE_LIMIT_BACKEND=redis` with a shared `REDIS_URL`, and utilize a standalone client/server ChromaDB deployment.
 
 ---
 
@@ -333,7 +354,7 @@ The `EmbeddingService` incorporates an automated dual-engine design:
 
 ## 🧪 Testing
 
-Execute the complete 37-test automated test suite:
+Execute the complete automated test suite across all units, security controls, and integration pipelines:
 
 ```bash
 pytest tests/ -v

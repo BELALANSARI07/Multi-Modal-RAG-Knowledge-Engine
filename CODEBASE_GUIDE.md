@@ -1,6 +1,6 @@
 # Multi-Modal RAG Knowledge Engine — Codebase & File Architecture Guide
 
-> **Document Version:** 1.1  
+> **Document Version:** 1.2  
 > **Audience:** Senior Engineers, Hiring Managers, Technical Interviewers, and Contributors  
 > **Purpose:** Exhaustive, file-by-file breakdown explaining **what** every file in the repository does, **why** it exists, and **how** it accomplishes its work under the hood.
 
@@ -228,7 +228,7 @@ app/services/ingestion_service.py  app/services/retrieval_service.py
   - Sanitize filenames and collision-resistant storage path generation.
   - Duplicate handling (`duplicate_strategy = "replace"` or `"skip"`).
   - Transactional rollback: purges uploaded PDF and extracted image directories if ChromaDB or embedding fails.
-  - Maintains persistent document registry at `data/documents_registry.json`.
+  - Thread-safe, atomic document registry writes at `data/documents_registry.json` using temporary files, `os.replace`, and recovery from corrupted JSON.
   - Comprehensive cascade delete (`delete_document_full`).
 
 ### `app/services/retrieval_service.py`
@@ -237,6 +237,7 @@ app/services/ingestion_service.py  app/services/retrieval_service.py
   - Filters out low-confidence matches using `min_relevance_score` (default: 0.20).
   - Truncates context blocks using `max_context_chars` (default: 8000) to prevent token window overflow.
   - Synthesizes grounded answers citing document page numbers and visual figures.
+  - Exponential backoff retry on transient connection failures and timeout enforcement (`vlm_timeout_seconds`).
 
 ---
 
@@ -246,20 +247,20 @@ app/services/ingestion_service.py  app/services/retrieval_service.py
 - **What it is:** Security middleware.
 - **Key Features:**
   - `RequestIDMiddleware`: Injects correlation ID (`X-Request-ID`).
-  - `InMemoryRateLimiter`: Sliding window rate limiter per client IP.
-  - `verify_api_key`: Enforces `X-API-Key` authentication when enabled.
+  - `RateLimitBackend`: Pluggable architecture supporting `MemoryRateLimitBackend` (process-local) and `RedisRateLimitBackend` (distributed multi-worker).
+  - `verify_api_key`: Enforces `X-API-Key` authentication when enabled using `SecretStr`.
 
 ### `app/api/dependencies.py`
 - **What it is:** Dependency injection providers reusing shared service singletons from `app.state`.
 
 ### `app/api/ingest.py`
-- **What it is:** `POST /api/v1/ingest` endpoint with magic bytes check, auth, and safe error masking.
+- **What it is:** `POST /api/v1/ingest` endpoint with chunked streaming body validation (preventing RAM exhaustion on oversized uploads), magic bytes check, auth, and safe error masking.
 
 ### `app/api/query.py`
-- **What it is:** `POST /api/v1/query` endpoint with rate limiting, auth, and grounded multi-modal answers.
+- **What it is:** `POST /api/v1/query` endpoint with query length/whitespace validation, top_k bounds, rate limiting, auth, and grounded multi-modal answers.
 
 ### `app/api/documents.py`
-- **What it is:** `GET /api/v1/documents` and `DELETE /api/v1/documents/{filename}` with complete filesystem and vector purging.
+- **What it is:** `GET /api/v1/documents` and `DELETE /api/v1/documents/{filename}` with complete filesystem and vector purging, with client-safe error masking and request ID tracking.
 
 ### `app/api/router.py`
 - **What it is:** Aggregates all sub-routers under `/api/v1`.

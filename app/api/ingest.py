@@ -19,8 +19,6 @@ from app.utils.file_utils import validate_pdf_signature
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Ingestion"])
 
-MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB limit
-
 
 @router.post(
     "/ingest",
@@ -50,32 +48,49 @@ async def ingest_pdf(
             detail=f"Invalid file extension: '{file.filename}'. Only .pdf files are supported.",
         )
 
+    max_allowed_bytes = service.settings.max_file_size_mb * 1024 * 1024
+    chunks: list[bytes] = []
+    total_bytes = 0
+    chunk_buffer_size = 64 * 1024  # 64 KB read buffer
+
     try:
-        content = await file.read()
+        while True:
+            chunk = await file.read(chunk_buffer_size)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > max_allowed_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"File exceeds maximum allowed size of {service.settings.max_file_size_mb} MB",
+                    headers={"X-Request-ID": req_id},
+                )
+            chunks.append(chunk)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("Failed to read uploaded file [Request: %s]: %s", req_id, e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to read uploaded file payload",
+            headers={"X-Request-ID": req_id},
         )
 
-    if len(content) == 0:
+    if total_bytes == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file is empty (0 bytes)",
+            headers={"X-Request-ID": req_id},
         )
 
-    if len(content) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds maximum allowed size of 50 MB ({len(content)} bytes uploaded)",
-        )
+    content = b"".join(chunks)
 
     # Security check: validate PDF magic header
     if not validate_pdf_signature(content):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Uploaded file header does not match valid PDF signature (%PDF-)",
+            headers={"X-Request-ID": req_id},
         )
 
     try:
@@ -86,24 +101,28 @@ async def ingest_pdf(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Security rejection: {se.message}",
+            headers={"X-Request-ID": req_id},
         )
     except DocumentEmptyError as de:
         logger.warning("Empty document rejection [Request: %s]: %s", req_id, de)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=de.message,
+            headers={"X-Request-ID": req_id},
         )
     except PDFParsingError as pe:
         logger.warning("PDF parsing rejection [Request: %s]: %s", req_id, pe)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"PDF parsing error: {pe.message}",
+            headers={"X-Request-ID": req_id},
         )
     except RAGEngineException as re:
         logger.error("Domain error during ingestion [Request: %s]: %s", req_id, re)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ingestion failed: {re.message}",
+            headers={"X-Request-ID": req_id},
         )
     except Exception as exc:
         # Never leak raw traceback or internal server paths to API clients
@@ -111,4 +130,5 @@ async def ingest_pdf(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An internal error occurred while processing document. Reference: {req_id}",
+            headers={"X-Request-ID": req_id},
         )

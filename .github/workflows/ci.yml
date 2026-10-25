@@ -20,7 +20,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install Ruff
-        run: pip install ruff
+        run: pip install ruff==0.6.8
 
       - name: Run Ruff Lint Checks
         run: ruff check .
@@ -70,11 +70,15 @@ jobs:
           DEBUG: "false"
           VLM_PROVIDER: "gemini"
         run: |
-          pytest tests/ -v --tb=short 2>&1 | tee pytest_output.txt || true
-          echo "### Test Output (${{ matrix.python-version }})" >> $GITHUB_STEP_SUMMARY
-          echo '```text' >> $GITHUB_STEP_SUMMARY
-          tail -n 60 pytest_output.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          if grep -E "(FAILED|ERROR)" pytest_output.txt; then
-            exit 1
+          set -o pipefail
+          pytest tests/ -v --tb=short 2>&1 | tee pytest_output.txt
+
+      - name: Publish Test Summary
+        if: always()
+        run: |
+          if [ -f pytest_output.txt ]; then
+            echo "### Test Output (${{ matrix.python-version }})" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            tail -n 80 pytest_output.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
           fi

@@ -2,7 +2,10 @@
 
 import json
 import logging
+import os
 import shutil
+import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +43,7 @@ class IngestionService:
         self.embedding_service = embedding_service or EmbeddingService(self.settings)
         self.vectorstore = vectorstore_service or VectorStoreService(self.settings)
         self.registry_file = ensure_directory(self.settings.upload_dir.parent) / "documents_registry.json"
+        self._registry_lock = threading.Lock()
 
     async def ingest_file(
         self,
@@ -249,40 +253,64 @@ class IngestionService:
             except Exception as e:
                 logger.warning("Rollback image directory cleanup warning: %s", e)
 
-    def _load_registry(self) -> dict[str, dict]:
-        """Load document metadata registry from JSON."""
+    def _write_registry_atomic(self, data: dict[str, dict]) -> None:
+        """Atomically persist registry data using a temporary file and atomic replacement."""
+        parent_dir = self.registry_file.parent
+        ensure_directory(parent_dir)
+
+        # Write to a temporary file in the same directory to ensure atomic os.replace across filesystem boundaries
+        with tempfile.NamedTemporaryFile("w", dir=parent_dir, delete=False, encoding="utf-8", suffix=".tmp") as tf:
+            temp_path = tf.name
+            json.dump(data, tf, indent=2)
+
+        os.replace(temp_path, self.registry_file)
+
+    def _load_registry_unlocked(self) -> dict[str, dict]:
+        """Internal helper reading the registry without acquiring self._registry_lock."""
         if not self.registry_file.exists():
             return {}
         try:
             with open(self.registry_file, encoding="utf-8") as f:
-                return json.load(f)
+                content = f.read().strip()
+                if not content:
+                    return {}
+                return json.loads(content)
         except Exception as e:
-            logger.warning("Failed to read document registry: %s", e)
+            logger.warning(
+                "Failed to parse document registry (possible corruption) (%s). Recovering with empty registry.",
+                e,
+            )
             return {}
+
+    def _load_registry(self) -> dict[str, dict]:
+        """Thread-safe read of the document metadata registry from JSON."""
+        with self._registry_lock:
+            return self._load_registry_unlocked()
 
     def _get_registry_entry(self, filename: str) -> DocumentMetadata | None:
         """Fetch metadata for a document if recorded."""
-        data = self._load_registry()
-        raw = data.get(filename)
-        return DocumentMetadata(**raw) if raw else None
+        with self._registry_lock:
+            data = self._load_registry_unlocked()
+            raw = data.get(filename)
+            return DocumentMetadata(**raw) if raw else None
 
     def _save_registry_entry(self, record: DocumentMetadata) -> None:
-        """Save document metadata to JSON registry."""
-        data = self._load_registry()
-        data[record.filename] = record.model_dump()
-        try:
-            with open(self.registry_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            logger.warning("Failed to save document registry: %s", e)
+        """Thread-safe atomic update of document metadata in the JSON registry."""
+        with self._registry_lock:
+            data = self._load_registry_unlocked()
+            data[record.filename] = record.model_dump()
+            try:
+                self._write_registry_atomic(data)
+            except Exception as e:
+                logger.warning("Failed to save document registry atomically: %s", e)
 
     def _remove_registry_entry(self, filename: str) -> None:
-        """Delete an entry from the document registry."""
-        data = self._load_registry()
-        if filename in data:
-            del data[filename]
-            try:
-                with open(self.registry_file, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-            except Exception as e:
-                logger.warning("Failed to update registry on delete: %s", e)
+        """Thread-safe atomic deletion of an entry from the document registry."""
+        with self._registry_lock:
+            data = self._load_registry_unlocked()
+            if filename in data:
+                del data[filename]
+                try:
+                    self._write_registry_atomic(data)
+                except Exception as e:
+                    logger.warning("Failed to update registry on delete: %s", e)

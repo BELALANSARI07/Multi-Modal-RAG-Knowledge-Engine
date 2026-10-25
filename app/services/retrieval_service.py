@@ -7,12 +7,29 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
 from app.config import Settings, get_settings
 from app.models.schemas import QueryMetadata, QueryRequest, QueryResponse, SourceNode
 from app.services.embedding_service import EmbeddingService
 from app.services.vectorstore_service import VectorStoreService
 
 logger = logging.getLogger(__name__)
+
+TRANSIENT_EXCEPTIONS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    ConnectionError,
+    TimeoutError,
+)
 
 RAG_SYSTEM_PROMPT_TEMPLATE = """You are a highly knowledgeable technical AI assistant answering questions based on multi-modal document context.
 Use ONLY the provided context to answer the question. If the context is insufficient, clearly state that the information is not present. Do NOT speculate or fabricate facts.
@@ -174,7 +191,7 @@ class RetrievalService:
 
         # 1. Try Gemini LLM
         if provider == "gemini":
-            key = self.settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
+            key = self.settings.gemini_api_key_str or os.getenv("GEMINI_API_KEY")
             if key and not key.startswith("your_"):
                 try:
                     import google.generativeai as genai
@@ -182,29 +199,61 @@ class RetrievalService:
                     genai.configure(api_key=key)
                     model = genai.GenerativeModel(self.settings.vlm_model_name)
 
+                    @retry(
+                        reraise=True,
+                        stop=stop_after_attempt(self.settings.vlm_max_retries),
+                        wait=wait_exponential(multiplier=1, min=1, max=5),
+                        retry=retry_if_exception_type(TRANSIENT_EXCEPTIONS),
+                    )
                     def _sync_call():
                         resp = model.generate_content(prompt)
                         return resp.text
 
-                    res = await asyncio.to_thread(_sync_call)
+                    res = await asyncio.wait_for(
+                        asyncio.to_thread(_sync_call),
+                        timeout=self.settings.vlm_timeout_seconds,
+                    )
                     return res.strip(), f"gemini/{self.settings.vlm_model_name}"
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Gemini synthesis timed out after %.1fs, falling back to grounded synthesizer.",
+                        self.settings.vlm_timeout_seconds,
+                    )
                 except Exception as e:
                     logger.warning("Gemini synthesis call failed (%s), falling back to grounded synthesizer.", e)
 
         # 2. Try OpenAI LLM
         elif provider == "openai":
-            key = self.settings.openai_api_key or os.getenv("OPENAI_API_KEY")
+            key = self.settings.openai_api_key_str or os.getenv("OPENAI_API_KEY")
             if key and not key.startswith("your_"):
                 try:
                     from openai import AsyncOpenAI
 
-                    client = AsyncOpenAI(api_key=key)
-                    resp = await client.chat.completions.create(
-                        model=self.settings.vlm_model_name,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.2,
+                    client = AsyncOpenAI(api_key=key, timeout=self.settings.vlm_timeout_seconds)
+
+                    @retry(
+                        reraise=True,
+                        stop=stop_after_attempt(self.settings.vlm_max_retries),
+                        wait=wait_exponential(multiplier=1, min=1, max=5),
+                        retry=retry_if_exception_type(TRANSIENT_EXCEPTIONS),
+                    )
+                    async def _call_openai():
+                        return await client.chat.completions.create(
+                            model=self.settings.vlm_model_name,
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0.2,
+                        )
+
+                    resp = await asyncio.wait_for(
+                        _call_openai(),
+                        timeout=self.settings.vlm_timeout_seconds,
                     )
                     return resp.choices[0].message.content.strip(), f"openai/{self.settings.vlm_model_name}"
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "OpenAI synthesis timed out after %.1fs, falling back to grounded synthesizer.",
+                        self.settings.vlm_timeout_seconds,
+                    )
                 except Exception as e:
                     logger.warning("OpenAI synthesis call failed (%s), falling back to grounded synthesizer.", e)
 

@@ -63,7 +63,7 @@ class VLMService:
     def _initialize_provider(self) -> None:
         """Configure client libraries based on the selected provider."""
         if self.provider == VLMProvider.GEMINI:
-            key = self.settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
+            key = self.settings.gemini_api_key_str or os.getenv("GEMINI_API_KEY")
             if key and not key.startswith("your_"):
                 try:
                     import google.generativeai as genai
@@ -77,7 +77,7 @@ class VLMService:
                 logger.warning("Gemini API key is not configured or is a placeholder.")
 
         elif self.provider == VLMProvider.OPENAI:
-            key = self.settings.openai_api_key or os.getenv("OPENAI_API_KEY")
+            key = self.settings.openai_api_key_str or os.getenv("OPENAI_API_KEY")
             if key and not key.startswith("your_"):
                 try:
                     from openai import AsyncOpenAI

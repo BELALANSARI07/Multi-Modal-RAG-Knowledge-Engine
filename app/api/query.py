@@ -36,11 +36,13 @@ async def query_knowledge_base(
         logger.error("Domain error during query retrieval [Request: %s]: %s", req_id, re)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Query processing error: {re.message}",
+            detail="A retrieval error occurred while querying the knowledge base.",
+            headers={"X-Request-ID": req_id},
         )
     except Exception as e:
         logger.exception("Unexpected error in query endpoint [Request: %s]: %s", req_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An internal retrieval error occurred. Reference: {req_id}",
+            headers={"X-Request-ID": req_id},
         )

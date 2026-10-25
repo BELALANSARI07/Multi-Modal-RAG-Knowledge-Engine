@@ -37,10 +37,18 @@ class EmbeddingService:
             logger.info("Attempting to load SentenceTransformer: %s", self.model_name)
             self._model = SentenceTransformer(self.model_name)
             sample = self._model.encode("test", show_progress_bar=False)
-            self._embedding_dim = len(sample)
+            loaded_dim = len(sample)
+            if loaded_dim != self.settings.embedding_dimension:
+                raise EmbeddingError(
+                    f"Embedding dimension mismatch: SentenceTransformer '{self.model_name}' produced dimension "
+                    f"{loaded_dim}, but configured dimension is {self.settings.embedding_dimension}."
+                )
+            self._embedding_dim = loaded_dim
             self._engine_type = "sentence_transformers"
             logger.info("Loaded SentenceTransformer %s (dim=%d)", self.model_name, self._embedding_dim)
             return self._model
+        except EmbeddingError:
+            raise
         except Exception as e:
             logger.warning(
                 "SentenceTransformer load failed (%s). Falling back to high-performance ONNX Runtime engine.",
@@ -53,14 +61,22 @@ class EmbeddingService:
 
             self._onnx_fn = ef.DefaultEmbeddingFunction()
             sample = self._onnx_fn(["test"])[0]
-            self._embedding_dim = len(sample)
+            loaded_dim = len(sample)
+            if loaded_dim != self.settings.embedding_dimension:
+                raise EmbeddingError(
+                    f"Embedding dimension mismatch: ONNX engine produced dimension "
+                    f"{loaded_dim}, but configured dimension is {self.settings.embedding_dimension}."
+                )
+            self._embedding_dim = loaded_dim
             self._engine_type = "onnx"
             logger.info("Loaded ONNX embedding engine (dim=%d)", self._embedding_dim)
             return self._onnx_fn
+        except EmbeddingError:
+            raise
         except Exception as onnx_err:
             logger.error("Both SentenceTransformer and ONNX embedding engines failed: %s", onnx_err)
             raise EmbeddingError(
-                f"Could not initialize embedding engine for {self.model_name}",
+                f"Both SentenceTransformer and ONNX embedding engines failed for {self.model_name}",
                 details=str(onnx_err),
             )
 

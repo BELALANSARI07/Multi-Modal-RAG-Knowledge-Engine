@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-25
+
+### Added
+- **Streamed Bounded Ingestion:** Incremental chunked body streaming in `/api/v1/ingest` rejecting oversized payloads before loading into RAM.
+- **Pluggable Rate Limiting Backends:** Introduced abstract `RateLimitBackend` with thread-safe `MemoryRateLimitBackend` and distributed `RedisRateLimitBackend` for multi-worker environments.
+- **Atomic Registry Persistence:** Hardened `documents_registry.json` writes using temporary files, `os.replace`, thread locking, and resilient recovery from malformed JSON.
+- **Production Configuration Validation:** Added strict Pydantic validators for positive numeric limits, chunk overlaps, CORS origins, duplicate strategies, and `SecretStr` credential masking.
+- **Enhanced LLM Generation Resilience:** Added timeout boundaries (`vlm_timeout_seconds`) and exponential backoff retry for transient LLM generation exceptions.
+- **Real Multi-Stage Dockerfile:** Separated wheel compilation in builder stage from minimal unprivileged runner image with single-worker concurrency protection for SQLite ChromaDB.
+- **CI/CD Reliability:** Preserved strict pytest exit codes via `pipefail` while publishing step summaries.
+- **Structured JSON Logging:** Added configurable JSON line log formatting via `LOG_FORMAT=json`.
+
 ## [1.1.0] - 2026-10-24
 
 ### Added

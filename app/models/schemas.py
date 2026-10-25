@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import ChunkType
 
@@ -66,17 +66,29 @@ class DocumentMetadata(BaseModel):
     total_pages: int
     text_chunks: int
     image_chunks: int
-    created_at: str
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: str = "active"
 
 
 class QueryRequest(BaseModel):
     """Request payload for the multi-modal RAG query endpoint."""
 
-    question: str = Field(..., min_length=2, description="User's natural language question")
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of relevant chunks to retrieve")
+    question: str = Field(..., min_length=2, max_length=1000, description="User's natural language question")
+    top_k: int = Field(default=5, ge=1, le=50, description="Number of relevant chunks to retrieve")
     include_sources: bool = Field(default=True, description="Whether to include retrieved source context blocks")
     filter_source: str | None = Field(default=None, description="Optional PDF filename to restrict search to")
+
+    @field_validator("question", mode="before")
+    @classmethod
+    def validate_question(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Question must be a string")
+        cleaned = v.strip()
+        if len(cleaned) < 2:
+            raise ValueError("Question must contain at least 2 non-whitespace characters")
+        if len(cleaned) > 1000:
+            raise ValueError("Question cannot exceed 1000 characters")
+        return cleaned
 
 
 class SourceNode(BaseModel):

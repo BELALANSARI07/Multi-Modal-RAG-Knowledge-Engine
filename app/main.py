@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.middleware import RequestIDMiddleware
+from app.api.middleware import RequestIDMiddleware, create_rate_limiter
 from app.api.router import api_router
 from app.config import Settings, get_settings
 from app.models.schemas import HealthResponse
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     app_settings = getattr(app.state, "settings", None) or get_settings()
 
     # 1. Initialize structured logging
-    setup_logging(app_settings.log_level)
+    setup_logging(app_settings.log_level, log_format=app_settings.log_format)
     logger.info("Starting up %s v%s...", app_settings.app_name, app_settings.app_version)
 
     # 2. Ensure application directories exist
@@ -59,18 +59,24 @@ async def lifespan(app: FastAPI):
         vectorstore_service=vectorstore,
     )
 
+    rate_limiter = create_rate_limiter(app_settings)
+
     app.state.settings = app_settings
     app.state.vectorstore = vectorstore
     app.state.embedder = embedder
     app.state.vlm = vlm
     app.state.ingestion_service = ingestion_service
     app.state.retrieval_service = retrieval_service
+    app.state.rate_limiter = rate_limiter
 
     logger.info("Application warmup complete. Serving requests.")
     yield
 
     # Shutdown logic
     logger.info("Shutting down %s...", app_settings.app_name)
+    rate_limiter = getattr(app.state, "rate_limiter", None)
+    if rate_limiter and hasattr(rate_limiter, "close"):
+        rate_limiter.close()
 
 
 def create_application(custom_settings: Settings = None) -> FastAPI:
@@ -127,6 +133,7 @@ def create_application(custom_settings: Settings = None) -> FastAPI:
                 "detail": f"An unexpected internal error occurred. Reference: {req_id}",
                 "request_id": req_id,
             },
+            headers={"X-Request-ID": req_id},
         )
 
     # 6. Root Endpoint
@@ -181,7 +188,7 @@ def create_application(custom_settings: Settings = None) -> FastAPI:
             logger.error("Readiness probe failed: %s", e)
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"status": "not_ready", "reason": str(e)},
+                content={"status": "not_ready", "reason": "Database or vector service unavailable"},
             )
 
     return app

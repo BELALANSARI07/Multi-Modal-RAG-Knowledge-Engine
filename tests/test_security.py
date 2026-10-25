@@ -127,3 +127,106 @@ class TestSecurityAndDefenses:
         # Verify 404 on immediate second delete
         del_again = test_client.delete("/api/v1/documents/cleanup_test.pdf")
         assert del_again.status_code == 404
+
+    def test_upload_empty_file_rejected(self, test_client: TestClient) -> None:
+        """Verify empty upload (0 bytes) is rejected with 400 Bad Request."""
+        files = {"file": ("empty.pdf", b"", "application/pdf")}
+        resp = test_client.post("/api/v1/ingest", files=files)
+        assert resp.status_code == 400
+        assert "empty" in resp.json()["detail"].lower()
+        assert "X-Request-ID" in resp.headers
+
+    def test_upload_size_limit_boundaries(self, tmp_path: Path) -> None:
+        """Verify uploads exactly at limit succeed and uploads exceeding limit are rejected with 413 without loading."""
+        from app.config import Settings
+        from app.main import create_application
+
+        limit_mb = 1  # 1 MB test limit = 1024 * 1024 bytes
+        limit_bytes = limit_mb * 1024 * 1024
+
+        settings = Settings(
+            chroma_persist_dir=tmp_path / "chroma_size_test",
+            upload_dir=tmp_path / "uploads_size_test",
+            extracted_images_dir=tmp_path / "imgs_size_test",
+            max_file_size_mb=limit_mb,
+            rate_limit_enabled=False,
+            api_key=None,
+        )
+        app = create_application(custom_settings=settings)
+
+        with TestClient(app) as client:
+            # Construct a valid PDF header followed by null pad up to exact limit
+            valid_header = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n"
+            pad_exact = b" " * (limit_bytes - len(valid_header))
+            exact_content = valid_header + pad_exact
+            assert len(exact_content) == limit_bytes
+
+            # 1. Exactly at limit -> Passed through size check (may fail parsing as invalid PDF body, but NOT 413)
+            files = {"file": ("exact_limit.pdf", exact_content, "application/pdf")}
+            resp_exact = client.post("/api/v1/ingest", files=files)
+            assert resp_exact.status_code != 413
+
+            # 2. Above limit by 10 bytes -> Rejected with 413 Payload Too Large
+            oversized_content = exact_content + (b"X" * 10)
+            files_over = {"file": ("oversized.pdf", oversized_content, "application/pdf")}
+            resp_over = client.post("/api/v1/ingest", files=files_over)
+            assert resp_over.status_code == 413
+            assert f"{limit_mb} MB" in resp_over.json()["detail"]
+            assert "X-Request-ID" in resp_over.headers
+
+    def test_internal_error_shielding_readiness_probe(self, test_client: TestClient) -> None:
+        """Verify /health/ready does not expose raw database errors, file paths, or stack traces."""
+        from unittest.mock import MagicMock
+
+        # Simulate vector store failure with sensitive internal path in exception message
+        sensitive_internal_error = "OperationalError: /var/lib/secret/chroma.sqlite3 disk I/O failure at line 49"
+        mock_vs = MagicMock()
+        mock_vs.count.side_effect = RuntimeError(sensitive_internal_error)
+
+        test_client.app.state.vectorstore = mock_vs
+        resp = test_client.get("/health/ready")
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["status"] == "not_ready"
+        # Must NOT leak the raw exception or filesystem paths
+        assert "secret" not in data["reason"]
+        assert "chroma.sqlite3" not in data["reason"]
+        assert data["reason"] == "Database or vector service unavailable"
+
+    def test_internal_error_shielding_document_list(self, test_client: TestClient) -> None:
+        """Verify /api/v1/documents shields internal exception details on database errors."""
+        from unittest.mock import MagicMock
+
+        mock_vs = MagicMock()
+        mock_vs.list_ingested_documents.side_effect = RuntimeError("Database cursor failure in internal/db/query.py")
+
+        test_client.app.state.vectorstore = mock_vs
+        resp = test_client.get("/api/v1/documents")
+
+        assert resp.status_code == 500
+        data = resp.json()
+        assert "cursor failure" not in data["detail"]
+        assert "internal/db" not in data["detail"]
+        assert "Reference:" in data["detail"]
+        assert "X-Request-ID" in resp.headers
+
+    def test_memory_rate_limit_backend_unit(self) -> None:
+        """Verify MemoryRateLimitBackend enforces RPM limit and thread safety."""
+        from app.api.middleware import MemoryRateLimitBackend
+
+        backend = MemoryRateLimitBackend()
+        backend.reset()
+        ip = "192.168.1.100"
+
+        # Allowed up to 3 requests
+        assert backend.is_allowed(ip, rpm=3) is True
+        assert backend.is_allowed(ip, rpm=3) is True
+        assert backend.is_allowed(ip, rpm=3) is True
+
+        # 4th request must be rejected
+        assert backend.is_allowed(ip, rpm=3) is False
+
+        # Reset clears counters
+        backend.reset()
+        assert backend.is_allowed(ip, rpm=3) is True
