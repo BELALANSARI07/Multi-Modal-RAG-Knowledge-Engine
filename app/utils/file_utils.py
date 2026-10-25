@@ -2,7 +2,7 @@
 
 import hashlib
 import re
-from pathlib import Path, PurePath
+from pathlib import Path, PurePosixPath
 
 PDF_MAGIC_BYTES = b"%PDF-"
 
@@ -34,8 +34,11 @@ def sanitize_filename(name: str) -> str:
     # 1. Remove null bytes and control chars
     clean = name.replace("\x00", "").strip()
 
+    # Normalize backslashes to forward slashes across all platforms
+    clean = clean.replace("\\", "/")
+
     # 2. Extract only the filename component, stripping any directory structure
-    clean = PurePath(clean).name
+    clean = PurePosixPath(clean).name
 
     # 3. Replace all dangerous path traversal characters and non-alphanumeric (except dot, underscore, dash)
     clean = re.sub(r"[^\w\.\-]", "_", clean)
