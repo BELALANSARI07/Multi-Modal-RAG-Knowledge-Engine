@@ -99,42 +99,6 @@ All benchmarks were captured using the reproducible evaluation tool [`scripts/be
 > The 33.54 ms P95 end-to-end pipeline latency was measured using the local deterministic grounded synthesizer (zero external network hops). When making live calls to Google Gemini or OpenAI Vision APIs, live external network transport and LLM generation time will add an additional 600 ms to 1,500 ms depending on external API server response times.
 
 ---
-
-## 🔬 Audit of Prior CV & Technical Claims
-
-To maintain total scientific integrity, the following unverified claims from previous resumes or reports were rigorously investigated:
-
-1. **Claim: "Recall@5: 92.4%"**
-   - **Audit Verdict**: **UNVERIFIED / NOT EVALUATED**.
-   - **Finding**: The repository does not contain an annotated ground-truth relevance evaluation dataset (e.g. BEIR benchmark, MS MARCO, or human-labeled PDF query-chunk pairs). In accordance with benchmark integrity requirements, synthetic or ungrounded accuracy numbers must not be claimed.
-   - **Action**: Retain as an aspirational goal or qualify as "Targeting >90% Recall@5 pending formal evaluation against DocVQA / BEIR".
-
-2. **Claim: "P95 query latency: 184 ms"**
-   - **Audit Verdict**: **CONTRADICTED BY REAL BENCHMARKS / QUALIFIED**.
-   - **Finding**: On modern multi-core CPUs, local warm retrieval P95 latency is **23.26 ms** (embedding + ChromaDB search), and local end-to-end P95 is **33.54 ms**. Live VLM synthesis adds variable external cloud latency (~800–1200 ms). The figure of 184 ms does not match either isolated local retrieval (~23 ms) or full live LLM synthesis (~1000 ms).
-   - **Action**: Update claim to reflect real measured benchmarks: *"Achieved P95 vector retrieval latency of 23.3 ms and local pipeline latency of 33.5 ms on CPU"*.
-
-3. **Claim: "A 384-dimensional vector space"**
-   - **Audit Verdict**: **VERIFIED**.
-   - **Finding**: `all-MiniLM-L6-v2` produces exactly 384-dimensional vectors under both SentenceTransformers and ONNX Runtime. Enforced via Pydantic validator and ChromaDB schema assertions.
-
-4. **Claim: "37 automated Pytest tests"**
-   - **Audit Verdict**: **PARTIALLY VERIFIED / OUTDATED**.
-   - **Finding**: The test suite originally contained 37 tests. Through security hardening, configuration validation, and registry recovery additions, the suite was expanded to **68 automated tests** (all passing).
-   - **Action**: Update claim to *"68 comprehensive automated Pytest tests across Python 3.10, 3.11, and 3.12"*.
-
-5. **Claim: "SHA-256-based visual deduplication"**
-   - **Audit Verdict**: **VERIFIED AS BYTE-LEVEL ONLY; NOT PERCEPTUAL**.
-   - **Finding**: `app/core/image_extractor.py` hashes raw compressed raster bytes. It prevents indexing identical image files across pages (e.g. repeating header logos). It does **not** detect perceptually similar, resized, or cropped images.
-   - **Action**: Qualify claim as *"Cryptographic SHA-256 byte deduplication for embedded document visuals"*.
-
-6. **Claim: "A dual-engine Hugging Face/ONNX inference setup"**
-   - **Audit Verdict**: **VERIFIED AS AN AUTOMATIC RESILIENT FALLBACK**.
-   - **Finding**: `app/services/embedding_service.py` lazily initializes `sentence-transformers` and automatically switches to ChromaDB's built-in ONNX Runtime engine if PyTorch fails to load (e.g., Windows WDAC/AppLocker DLL policies). Cross-engine cosine correlation is verified at 1.0000.
-   - **Action**: Safe to retain with the qualification that ONNX functions as a high-availability fallback engine.
-
----
-
 ## 📁 Repository Structure
 
 ```
