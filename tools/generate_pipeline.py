@@ -119,6 +119,7 @@ jobs:
     needs: quality-and-audit
     runs-on: ubuntu-24.04
     outputs:
+      has_creds: ${{ steps.check-creds.outputs.has_creds }}
       image_tag: ${{ steps.set-tag.outputs.tag }}
       image_uri: ${{ steps.build-image.outputs.image }}
 
@@ -126,7 +127,33 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Pre-Flight AWS Credential Check
+        id: check-creds
+        run: |
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "has_creds=false" >> $GITHUB_OUTPUT
+            echo "::warning title=AWS Credentials Missing::AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY is not set in GitHub Secrets. Docker image will be built and verified locally without pushing to ECR."
+            echo "### :warning: AWS Credentials Not Configured" >> $GITHUB_STEP_SUMMARY
+            echo "The pipeline verified code quality, dependencies, and tests, but skipped AWS ECR push because AWS secrets are not provisioned." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**To enable cloud deployment to ECR & ECS:**" >> $GITHUB_STEP_SUMMARY
+            echo "1. Go to repository **Settings > Secrets and variables > Actions**" >> $GITHUB_STEP_SUMMARY
+            echo "2. Add \`AWS_ACCESS_KEY_ID\` and \`AWS_SECRET_ACCESS_KEY\`" >> $GITHUB_STEP_SUMMARY
+            echo "3. Add \`ECR_REPOSITORY\`, \`ECS_CLUSTER\`, and \`ECS_SERVICE\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "has_creds=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Docker Image (Local Verification Mode)
+        if: steps.check-creds.outputs.has_creds != 'true'
+        run: |
+          echo "Building Docker image to verify container validity..."
+          docker build -t multimodal-rag-engine:${GITHUB_SHA::7} .
+          echo "### :white_check_mark: Docker Image Verification" >> $GITHUB_STEP_SUMMARY
+          echo "Container image successfully built and verified locally." >> $GITHUB_STEP_SUMMARY
+
       - name: Configure AWS Credentials
+        if: steps.check-creds.outputs.has_creds == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -134,17 +161,20 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
       - name: Log in to Amazon ECR
+        if: steps.check-creds.outputs.has_creds == 'true'
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Compute Deterministic Image Tag
+        if: steps.check-creds.outputs.has_creds == 'true'
         id: set-tag
         run: |
           TAG="${GITHUB_SHA::7}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "ECR_TAG=${TAG}" >> $GITHUB_ENV
 
-      - name: Build, Tag, and Push Docker Image
+      - name: Build, Tag, and Push Docker Image to ECR
+        if: steps.check-creds.outputs.has_creds == 'true'
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -168,6 +198,7 @@ jobs:
   deploy-to-ecs:
     name: Deploy to AWS ECS
     needs: build-and-push
+    if: needs.build-and-push.outputs.has_creds == 'true'
     runs-on: ubuntu-24.04
     outputs:
       previous_task_def: ${{ steps.record-previous.outputs.prev_task_def }}
@@ -224,6 +255,7 @@ jobs:
   post-deploy-verification:
     name: Post-Deploy Health Check & Latency Gate
     needs: [build-and-push, deploy-to-ecs]
+    if: needs.build-and-push.outputs.has_creds == 'true'
     runs-on: ubuntu-24.04
 
     steps:
@@ -271,8 +303,8 @@ jobs:
   # a high-priority incident alert to the configured webhook.
   automated-rollback:
     name: Automated Deployment Rollback
-    needs: [deploy-to-ecs, post-deploy-verification]
-    if: failure() && needs.deploy-to-ecs.result == 'success'
+    needs: [build-and-push, deploy-to-ecs, post-deploy-verification]
+    if: failure() && needs.build-and-push.outputs.has_creds == 'true' && needs.deploy-to-ecs.result == 'success'
     runs-on: ubuntu-24.04
 
     steps:
