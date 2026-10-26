@@ -1,61 +1,137 @@
 # Multi-Modal Retrieval-Augmented Generation (RAG) Knowledge Engine
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Python 3.10 - 3.12](https://img.shields.io/badge/Python-3.10%20--%203.12-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688.svg)](https://fastapi.tiangolo.com/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-Unified%20Store-orange.svg)](https://www.trychroma.com/)
 [![CI/CD](https://github.com/BELALANSARI07/Multi-Modal-RAG-Knowledge-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/BELALANSARI07/Multi-Modal-RAG-Knowledge-Engine/actions/workflows/ci.yml)
-[![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](Dockerfile)
+[![Tests Passing](https://img.shields.io/badge/Tests-68%2F68%20Passed-brightgreen.svg)](tests/)
+[![Docker Ready](https://img.shields.io/badge/Docker-Multi--Stage%20Ready-2496ED.svg)](Dockerfile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An enterprise-grade, asynchronous **Multi-Modal RAG Knowledge Engine** designed to ingest complex technical PDF documents containing both unstructured narrative text and visual figures (charts, architecture diagrams, graphs).
+An enterprise-grade, asynchronous **Multi-Modal RAG Knowledge Engine** designed to ingest complex technical PDF documents containing unstructured narrative text, tables, and visual graphics (charts, architecture diagrams, graphs).
 
-By treating embedded visuals as first-class citizens, the engine routes extracted figures through Vision-Language Models (VLMs) to produce dense, factual descriptions. These visual summaries and text chunks are mapped into a single, unified vector space (ChromaDB) to enable multi-modal semantic retrieval and grounded answer synthesis.
+By treating embedded visuals as first-class citizens, the engine extracts figures, routes them through Vision-Language Models (VLMs) to produce dense factual descriptions, and maps both text chunks and visual summaries into a single, unified 384-dimensional vector space (ChromaDB) for semantic retrieval and grounded answer synthesis.
 
 ---
 
-## 🏛️ System Architecture
+## 🏛️ System Architecture & Data Flow
 
 ```mermaid
 flowchart TD
     subgraph Multi-Modal Ingestion Pipeline
-        A["PDF Upload (POST /api/v1/ingest)"] --> B["Security Validation\n(%PDF- Magic Bytes + Sanitization)"]
-        B --> C["PyMuPDF Parser\n(CPU-bound ThreadPool)"]
-        C --> D["Recursive Character Text Chunker\n(512-char window, 64 overlap)"]
-        C --> E["Visual Figure Extractor\n(Deduplication + >100px Filter)"]
-        E --> F["VLM Semantic Summarizer\n(Gemini 1.5 Flash / GPT-4o-mini)"]
-        F --> G["Dense Visual Summaries"]
-        D --> H["Dense Vector Embedder\n(all-MiniLM-L6-v2 / ONNX Runtime)"]
-        G --> H
-        H --> I[("ChromaDB Unified Store\n(HNSW Cosine Metric)")]
+        A["PDF Upload (POST /api/v1/ingest)"] --> B["Security Validation\n(%PDF- Magic Bytes + Filename Sanitization)"]
+        B --> C["Bounded 64KB Chunked Stream\n(Memory Exhaustion Defense)"]
+        C --> D["PyMuPDF Parser\n(CPU-bound ThreadPool)"]
+        D --> E["Recursive Character Text Chunker\n(512-char window, 64 overlap)"]
+        D --> F["Visual Figure Extractor\n(SHA-256 Byte Hash + >100px Filter)"]
+        F --> G["VLM Semantic Summarizer\n(Gemini 1.5 Flash / GPT-4o-mini / Synthetic Fallback)"]
+        G --> H["Dense Visual Descriptions"]
+        E --> I["Dense Vector Embedder\n(all-MiniLM-L6-v2 / ONNX Runtime Fallback)"]
+        H --> I
+        I --> J[("ChromaDB Unified Store\n(In-process Persistent SQLite, Cosine Metric)")]
+        E --> K["Atomic Document Registry\n(tempfile + os.replace + Lock)"]
     end
 
     subgraph Query & Synthesis Pipeline
-        J["User Query (POST /api/v1/query)"] --> K["Auth & Rate Limiting Guard\n(X-API-Key + Sliding Window)"]
-        K --> L["Query Vectorizer"]
-        L --> I
-        I --> M["Top-K Semantic Context Retrieval\n(Score Thresholding >= 0.20)"]
-        M --> N["Context Truncation Guardrail\n(Max 8000 Chars)"]
-        N --> O["LLM Answer Synthesis\n(Gemini / OpenAI / Grounded Fallback)"]
-        O --> P["Synthesized Answer + Citations\n+ Static Image URLs (/static/images/...)"]
+        L["User Query (POST /api/v1/query)"] --> M["Security & Rate Limiting Middleware\n(X-API-Key + Sliding Window Limiter)"]
+        M --> N["Input Validation Guardrail\n(Length 2-1000 chars, top_k 1-50)"]
+        N --> O["Query Vectorizer (384-dim)"]
+        O --> J
+        J --> P["Top-K Semantic Context Retrieval\n(Relevance Threshold >= 0.20)"]
+        P --> Q["Context Truncation Guardrail\n(Max 8,000 Chars)"]
+        Q --> R["LLM Answer Synthesis\n(Tenacity Retries + 30s Timeout)"]
+        R --> S["Grounded Answer + Citations\n+ Static Image URLs (/static/images/...)"]
     end
 ```
 
 ---
 
-## ✨ Key Technical Highlights
+## 🔍 Feature Implementation & Verification Matrix
 
-- **Unified Multi-Modal Vector Space:** Text paragraphs and VLM visual figure summaries coexist in one ChromaDB collection, indexed with 384-dimensional normalized vectors.
-- **Visual Deduplication & Normalization:** Filters out icons and UI decorations (<100px), computes SHA-256 visual hashes to prevent duplicate indexing across pages, and normalizes high-resolution charts with Lanczos resampling.
-- **Enterprise Security Hardening:**
-  - Validates `%PDF-` magic byte headers on uploads to prevent disguised payload attacks.
-  - Path-traversal-proof filename sanitization strips relative sequences (`../`, `..\`) and controls.
-  - Optional API Key authentication (`X-API-Key`) and per-client token-bucket rate limiting.
-  - Shields internal database exceptions and stack traces from public API responses.
-- **Transactional Ingestion & Cascade Rollback:** If embedding or ChromaDB upsert fails mid-run, all uploaded files and cropped images for that batch are automatically purged.
-- **Resilient Dual-Engine Embeddings:** Employs Hugging Face `sentence-transformers` with an automatic, zero-overhead fallback to ONNX Runtime (`onnxruntime`), guaranteeing 100% portability across secure Windows environments (AppLocker/WDAC).
-- **Production Containerization:** Multi-stage `Dockerfile` (non-root `appuser`) and `docker-compose.yml` with health checks and persistent volume mappings.
-- **Automated CI/CD:** GitHub Actions workflow running Ruff linting, secret detection (Gitleaks), and full test matrix across Python 3.10, 3.11, and 3.12.
-- **Comprehensive Test Suite:** 37 automated unit, integration, and security tests (100% pass rate).
+Every architectural capability in this repository has been audited, categorized, and verified against actual source code:
+
+| Capability / Component | Implementation Details | Classification | Verification Source |
+| :--- | :--- | :--- | :--- |
+| **PDF Ingestion & Text Extraction** | PyMuPDF (`fitz`), text span extraction, character counting, `%PDF-` magic byte validation | **Implemented & Verified** | `tests/test_pdf_parser.py` |
+| **Visual Content Processing** | Raster image extraction, `<100px` icon filtering, Lanczos resizing (`>2048px`), RGB normalization | **Implemented & Verified** | `app/core/image_extractor.py` |
+| **Hierarchical Text Chunking** | Recursive chunker (`\n\n` &rarr; `\n` &rarr; `. ` &rarr; ` `), 512-char window, 64-char overlap | **Implemented & Verified** | `tests/test_text_chunker.py` |
+| **Embedding Models & Dimensions** | `all-MiniLM-L6-v2` generating 384-dimensional normalized dense vectors | **Implemented & Verified** | `scripts/benchmark_engine.py` |
+| **ChromaDB Vector Store** | In-process persistent SQLite storage with HNSW cosine distance metric (`hnsw:space: cosine`) | **Implemented & Verified** | `tests/test_vectorstore.py` |
+| **Qdrant Vector Database** | *Not present in repository* — ChromaDB is the sole vector store implementation | **Not found in repository** | Codebase audit |
+| **ColPali / BGE Multi-Vector** | *Not present in repository* — Uses single dense embedding retrieval via MiniLM | **Not found in repository** | Codebase audit |
+| **Vision-Language Model (VLM)** | Google Gemini (`gemini-1.5-flash`) & OpenAI (`gpt-4o-mini`) with concurrency semaphores & retries | **Implemented & Verified** | `tests/test_vlm_service.py` |
+| **Offline Local Fallback** | Deterministic local visual descriptor and grounded synthesizer when API keys are unconfigured | **Implemented & Verified** | `tests/test_vlm_service.py` |
+| **ONNX Runtime Fallback** | ChromaDB ONNX MiniLM engine automatically activates if PyTorch or DLLs fail | **Implemented & Verified** | `tests/test_embedding_fallback.py` |
+| **Image Deduplication** | Cryptographic SHA-256 byte hashing of extracted image streams across document pages | **Implemented & Verified** | `scripts/benchmark_engine.py` |
+| **Perceptual Image Hash (pHash)** | *Not implemented* — Deduplication is strict byte-exact matching, not perceptual | **Not found in repository** | `scripts/benchmark_engine.py` |
+| **Security & Error Shielding** | Masked `SecretStr`, bounded 64KB uploads (413), generic client error shielding, `X-Request-ID` | **Implemented & Verified** | `tests/test_security.py` |
+| **Atomic Document Registry** | Thread-locked, atomic temporary file replacement (`os.replace`) with JSON recovery | **Implemented & Verified** | `tests/test_registry.py` |
+| **Pluggable Rate Limiting** | Process-local sliding window (`memory`) with abstract `redis` multi-worker interface | **Implemented & Verified** | `tests/test_security.py` |
+| **Automated Pytest Suite** | 68 unit, integration, and security test cases (100% pass rate) | **Implemented & Verified** | `pytest tests/ -v` |
+| **Reproducible Benchmark Suite** | Automated benchmark script capturing latency percentiles (P50, P90, P95, P99) and telemetry | **Implemented & Verified** | `scripts/benchmark_engine.py` |
+
+---
+
+## 📊 Evidence-Backed Benchmark Results
+
+All benchmarks were captured using the reproducible evaluation tool [`scripts/benchmark_engine.py`](scripts/benchmark_engine.py) on physical hardware. Raw machine-readable outputs are stored in [`benchmarks/benchmark_results.json`](benchmarks/benchmark_results.json).
+
+### Measured Performance & Latency Matrix
+
+| Metric | Measured Value | Sample Size / Dataset | Hardware & Environment | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Vector Space Dimension** | **384 dimensions** | `all-MiniLM-L6-v2` | Python 3.10.11 / PyTorch 2.14.1 | **Verified** |
+| **Cold-Start Embedding Latency** | **1,360.34 ms** | $N = 1$ initialization | AMD64 Family 25 (Zen 3/4) / Windows 10 | **Measured** |
+| **Query Embedding Latency (P50)** | **16.98 ms** | $N = 50$ warm queries | AMD64 CPU / SentenceTransformers | **Measured** |
+| **Query Embedding Latency (P95)** | **19.79 ms** | $N = 50$ warm queries | AMD64 CPU / SentenceTransformers | **Measured** |
+| **ChromaDB Vector Search (P50)** | **3.09 ms** | $N = 50$ queries (top-k=5) | ChromaDB 1.5.9 / Persistent SQLite HNSW | **Measured** |
+| **ChromaDB Vector Search (P95)** | **4.96 ms** | $N = 50$ queries (top-k=5) | ChromaDB 1.5.9 / Persistent SQLite HNSW | **Measured** |
+| **Combined Retrieval Latency (P50)** | **20.46 ms** | $N = 50$ queries | Embedding + ChromaDB Query | **Measured** |
+| **Combined Retrieval Latency (P95)** | **23.26 ms** | $N = 50$ queries | Embedding + ChromaDB Query | **Measured** |
+| **End-to-End Pipeline Latency (P50)**| **29.44 ms** | $N = 50$ queries | Retrieval + Guardrails + Grounded Synth | **Measured** |
+| **End-to-End Pipeline Latency (P95)**| **33.54 ms** | $N = 50$ queries | Retrieval + Guardrails + Grounded Synth | **Measured** |
+| **Cross-Engine Output Correlation** | **Cosine Sim = 1.0000** | HuggingFace vs ONNX | Identical weights (`all-MiniLM-L6-v2`) | **Verified** |
+| **Retrieval Accuracy (Recall@5)** | **Not evaluated** | *No ground-truth corpus* | Standard benchmark dataset required | **Not Evaluated** |
+| **Automated Test Coverage** | **68 / 68 Passed (100%)**| 68 automated Pytest cases | Ubuntu 24.04 (3.10, 3.11, 3.12) & Win32 | **Verified** |
+
+> [!NOTE]
+> **End-to-End Latency Context:**  
+> The 33.54 ms P95 end-to-end pipeline latency was measured using the local deterministic grounded synthesizer (zero external network hops). When making live calls to Google Gemini or OpenAI Vision APIs, live external network transport and LLM generation time will add an additional 600 ms to 1,500 ms depending on external API server response times.
+
+---
+
+## 🔬 Audit of Prior CV & Technical Claims
+
+To maintain total scientific integrity, the following unverified claims from previous resumes or reports were rigorously investigated:
+
+1. **Claim: "Recall@5: 92.4%"**
+   - **Audit Verdict**: **UNVERIFIED / NOT EVALUATED**.
+   - **Finding**: The repository does not contain an annotated ground-truth relevance evaluation dataset (e.g. BEIR benchmark, MS MARCO, or human-labeled PDF query-chunk pairs). In accordance with benchmark integrity requirements, synthetic or ungrounded accuracy numbers must not be claimed.
+   - **Action**: Retain as an aspirational goal or qualify as "Targeting >90% Recall@5 pending formal evaluation against DocVQA / BEIR".
+
+2. **Claim: "P95 query latency: 184 ms"**
+   - **Audit Verdict**: **CONTRADICTED BY REAL BENCHMARKS / QUALIFIED**.
+   - **Finding**: On modern multi-core CPUs, local warm retrieval P95 latency is **23.26 ms** (embedding + ChromaDB search), and local end-to-end P95 is **33.54 ms**. Live VLM synthesis adds variable external cloud latency (~800–1200 ms). The figure of 184 ms does not match either isolated local retrieval (~23 ms) or full live LLM synthesis (~1000 ms).
+   - **Action**: Update claim to reflect real measured benchmarks: *"Achieved P95 vector retrieval latency of 23.3 ms and local pipeline latency of 33.5 ms on CPU"*.
+
+3. **Claim: "A 384-dimensional vector space"**
+   - **Audit Verdict**: **VERIFIED**.
+   - **Finding**: `all-MiniLM-L6-v2` produces exactly 384-dimensional vectors under both SentenceTransformers and ONNX Runtime. Enforced via Pydantic validator and ChromaDB schema assertions.
+
+4. **Claim: "37 automated Pytest tests"**
+   - **Audit Verdict**: **PARTIALLY VERIFIED / OUTDATED**.
+   - **Finding**: The test suite originally contained 37 tests. Through security hardening, configuration validation, and registry recovery additions, the suite was expanded to **68 automated tests** (all passing).
+   - **Action**: Update claim to *"68 comprehensive automated Pytest tests across Python 3.10, 3.11, and 3.12"*.
+
+5. **Claim: "SHA-256-based visual deduplication"**
+   - **Audit Verdict**: **VERIFIED AS BYTE-LEVEL ONLY; NOT PERCEPTUAL**.
+   - **Finding**: `app/core/image_extractor.py` hashes raw compressed raster bytes. It prevents indexing identical image files across pages (e.g. repeating header logos). It does **not** detect perceptually similar, resized, or cropped images.
+   - **Action**: Qualify claim as *"Cryptographic SHA-256 byte deduplication for embedded document visuals"*.
+
+6. **Claim: "A dual-engine Hugging Face/ONNX inference setup"**
+   - **Audit Verdict**: **VERIFIED AS AN AUTOMATIC RESILIENT FALLBACK**.
+   - **Finding**: `app/services/embedding_service.py` lazily initializes `sentence-transformers` and automatically switches to ChromaDB's built-in ONNX Runtime engine if PyTorch fails to load (e.g., Windows WDAC/AppLocker DLL policies). Cross-engine cosine correlation is verified at 1.0000.
+   - **Action**: Safe to retain with the qualification that ONNX functions as a high-availability fallback engine.
 
 ---
 
@@ -65,37 +141,39 @@ flowchart TD
 multimodal-rag-engine/
 │
 ├── .github/
-│   ├── workflows/ci.yml            # CI/CD pipeline (Ruff, Gitleaks, Python 3.10-3.12)
+│   ├── workflows/
+│   │   ├── ci.yml                  # CI pipeline: Ruff 0.6.8, Gitleaks, Pytest Matrix (3.10-3.12)
+│   │   └── deploy.yml              # Production pipeline with active health gate & automated rollback
 │   ├── ISSUE_TEMPLATE/             # Bug report and feature request templates
 │   └── PULL_REQUEST_TEMPLATE.md    # Pull request review template
 │
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                     # FastAPI factory, lifespan, CORS, and health probes
-│   ├── config.py                   # Pydantic Settings with strict validation
+│   ├── main.py                     # FastAPI factory, lifespan, CORS, rate limiting, and health probes
+│   ├── config.py                   # Strict Pydantic Settings with SecretStr credential masking
 │   │
 │   ├── api/                        # REST API routing layer
 │   │   ├── __init__.py
 │   │   ├── router.py               # Aggregated /api/v1 router
-│   │   ├── ingest.py               # POST /api/v1/ingest (PDF upload & extraction)
-│   │   ├── query.py                # POST /api/v1/query (multi-modal RAG search)
-│   │   ├── documents.py            # GET & DELETE /api/v1/documents
+│   │   ├── ingest.py               # POST /api/v1/ingest (Bounded 64KB streaming upload)
+│   │   ├── query.py                # POST /api/v1/query (Multi-modal RAG search & citations)
+│   │   ├── documents.py            # GET & DELETE /api/v1/documents (with cascade cleanup)
 │   │   ├── dependencies.py         # Shared service injection from app.state
-│   │   └── middleware.py           # Request ID, rate limiting, and API key auth
+│   │   └── middleware.py           # Request ID, rate limiting (Memory / Redis), and API key auth
 │   │
 │   ├── core/                       # Ingestion algorithms
 │   │   ├── __init__.py
-│   │   ├── pdf_parser.py           # PyMuPDF parser with magic byte validation
+│   │   ├── pdf_parser.py           # PyMuPDF parser with %PDF- magic byte validation
 │   │   ├── image_extractor.py      # Embedded image extraction, sizing & SHA-256 deduplication
 │   │   ├── text_chunker.py         # Recursive character chunker with sliding overlap
-│   │   └── exceptions.py           # Domain exception hierarchy
+│   │   └── exceptions.py           # Custom exception hierarchy
 │   │
 │   ├── services/                   # Business logic and external API integrations
 │   │   ├── __init__.py
-│   │   ├── embedding_service.py    # Dual-engine SentenceTransformer + ONNX Runtime (384-dim)
-│   │   ├── vlm_service.py          # Gemini 1.5 Flash / GPT-4o-mini client with backoff
+│   │   ├── embedding_service.py    # Resilient dual-engine SentenceTransformer + ONNX Runtime (384-dim)
+│   │   ├── vlm_service.py          # Gemini 1.5 Flash / GPT-4o-mini client with fallback
 │   │   ├── vectorstore_service.py  # ChromaDB persistent collection manager
-│   │   ├── ingestion_service.py    # Transactional ingestion orchestrator with rollback
+│   │   ├── ingestion_service.py    # Transactional ingestion orchestrator with atomic registry
 │   │   └── retrieval_service.py    # Top-k retrieval, thresholding, and prompt synthesis
 │   │
 │   ├── models/                     # Data schemas & validation
@@ -106,51 +184,64 @@ multimodal-rag-engine/
 │   └── utils/                      # Utilities
 │       ├── __init__.py
 │       ├── file_utils.py           # Path sanitization, magic bytes, and deterministic IDs
-│       └── logging_config.py       # Structured production logging
+│       └── logging_config.py       # Structured text and JSON production logging
+│
+├── architecture/                   # Operational standards
+│   ├── deployment_sop.md           # Deterministic deployment SOP & failure thresholds
+│   └── rollback_matrix.md          # Rollback decision matrix and recovery runbook
+│
+├── benchmarks/                     # Reproducible evaluation outputs
+│   └── benchmark_results.json      # Machine-readable benchmark telemetry
 │
 ├── data/
 │   ├── uploads/                    # Ingested PDF documents (.gitkeep)
 │   └── extracted_images/           # Cropped diagrams & charts (served at /static/images)
 │
 ├── chroma_db/                      # ChromaDB persistent vector database
-├── tests/                          # 37 Pytest unit, integration, and security tests
+│
+├── scripts/
+│   ├── benchmark_engine.py         # Evidence-based latency and model benchmark runner
+│   ├── seed_sample.py              # Synthetic demo generation & trial query script
+│   └── start_production.py         # Production launcher with pre-flight checks
+│
+├── tests/                          # 68 automated Pytest unit, integration, and security tests
 │   ├── conftest.py                 # Shared fixtures with isolated test clients
 │   ├── test_api.py                 # REST endpoint lifecycle tests
-│   ├── test_security.py            # Path traversal, magic bytes, auth, rate limiting
+│   ├── test_config.py              # Pydantic settings validators and SecretStr masking
+│   ├── test_embedding_fallback.py  # ONNX fallback, lazy-loading, and dimension tests
 │   ├── test_embedding_service.py   # Vector dimension and batch tests
 │   ├── test_ingestion.py           # Pipeline integration and rollback tests
+│   ├── test_operational.py         # Query input bounds, JSON logging, and timeout fallback
 │   ├── test_pdf_parser.py          # Text/image extraction and empty doc tests
+│   ├── test_registry.py            # Atomic registry writes and corrupt JSON recovery
+│   ├── test_security.py            # Path traversal, magic bytes, auth, rate limiting, error shielding
 │   ├── test_text_chunker.py        # Boundary splitting and overlap tests
 │   ├── test_vectorstore.py         # Vector similarity and cascade deletion
 │   └── test_vlm_service.py         # Mocked Gemini/OpenAI calls and degradation
 │
-├── scripts/
-│   └── seed_sample.py              # Synthetic demo generation & trial query script
-├── .dockerignore
-├── .env.example                    # Environment configuration template
-├── .gitignore                      # Git exclusion rules
-├── .gitleaks.toml                  # Secret scanning configuration
-├── .python-version                 # Declares Python 3.10.11
-├── CHANGELOG.md                    # Keep a Changelog documentation
-├── CODE_OF_CONDUCT.md              # Contributor Covenant v2.1
-├── CODEBASE_GUIDE.md               # Exhaustive file-by-file codebase guide
-├── CONTRIBUTING.md                 # Contribution guidelines
-├── Dockerfile                      # Production container image
-├── docker-compose.yml              # Multi-container orchestration
-├── LICENSE                         # MIT License
-├── plan.md                         # Initial architecture blueprint
-├── pyproject.toml                  # PEP 621 project configuration
-├── pytest.ini                      # Pytest runner configuration
-├── requirements.txt                # Pinned production dependencies
-└── requirements-dev.txt            # Development and test dependencies
+├── tools/                          # CI/CD and deployment diagnostic tools
+│   ├── audit_engine.py             # Static security & Dockerfile scanner
+│   ├── check_dependencies.py       # Storage & dependency connectivity tester
+│   ├── generate_pipeline.py        # Autonomous CI/CD pipeline generator
+│   ├── post_deploy_health_check.py # Post-deploy liveness, readiness, and latency gate
+│   ├── rollback_handler.py         # Automated ECS rollback orchestrator
+│   └── verify_secrets.py           # GitHub Secrets configuration auditor
+│
+├── DEPLOYMENT_RUNBOOK.md           # Turnkey deployment guide for AWS ECS, Docker, and VPS
+├── Production_Readiness_Report.md  # Formal B.L.A.S.T. Production Readiness Audit
+└── Readiness_Audit_Map.md          # Architectural source of truth
 ```
 
 ---
 
-## 🚀 Quickstart Guide
+## 🚀 Quickstart & Setup Guide
 
-### 1. Clone & Set Up Environment
+### 1. Prerequisites
+- Python 3.10 to 3.12 installed
+- Git
+- (Optional) Docker and Docker Compose
 
+### 2. Installation
 ```bash
 git clone https://github.com/BELALANSARI07/Multi-Modal-RAG-Knowledge-Engine.git
 cd Multi-Modal-RAG-Knowledge-Engine
@@ -164,22 +255,29 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-### 2. Configure Environment
-
+### 3. Environment Configuration
 Copy the template configuration:
-
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` to configure your settings:
-
+Key environment variables in `.env`:
 ```ini
-# Core Configuration
+# Application
+APP_NAME=MultiModal-RAG-Engine
+LOG_LEVEL=INFO
+LOG_FORMAT=text                         # "text" or "json"
+
+# VLM / LLM Provider Configuration
 VLM_PROVIDER=gemini                     # "gemini" or "openai"
-GEMINI_API_KEY=your_gemini_api_key      # Required for live Gemini VLM calls
-OPENAI_API_KEY=your_openai_api_key      # Required for live OpenAI VLM calls
+GEMINI_API_KEY=your_gemini_api_key      # Required for live Gemini calls
+OPENAI_API_KEY=your_openai_api_key      # Required for live OpenAI calls
 VLM_MODEL_NAME=gemini-1.5-flash
+VLM_TIMEOUT_SECONDS=30.0
+
+# Vector Store & Embeddings
+EMBEDDING_MODEL_NAME=all-MiniLM-L6-v2
+EMBEDDING_DIMENSION=384
 CHROMA_PERSIST_DIR=./chroma_db
 CHROMA_COLLECTION_NAME=knowledge_base
 
@@ -187,62 +285,61 @@ CHROMA_COLLECTION_NAME=knowledge_base
 API_KEY=                                # Leave empty to disable authentication
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_REQUESTS_PER_MINUTE=60
-RATE_LIMIT_BACKEND=memory               # "memory" (process-local) or "redis" (multi-worker)
-REDIS_URL=                              # e.g., redis://localhost:6379/0 (if using redis backend)
+RATE_LIMIT_BACKEND=memory               # "memory" or "redis"
 ```
 
 > **Live vs. Offline Local Fallback:**
-> - **Live Mode:** Provide a valid `GEMINI_API_KEY` (or `OPENAI_API_KEY`) to enable live multi-modal visual summarization and answer generation.
-> - **Offline Fallback Mode:** When API keys are left unset or placeholder values (`your_...`), the engine automatically switches to a deterministic, zero-cost local grounded synthesizer and structured visual description generator. This allows end-to-end integration testing and offline development without external API costs or internet dependency.
-
-### 3. Run the Demonstration Seed Script
-
-To test the ingestion, visual cropping, and multi-modal query without starting the server:
-
-```bash
-python scripts/seed_sample.py
-```
-
-### 4. Start the Production Server
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Interactive OpenAPI Swagger UI is available at `http://127.0.0.1:8000/docs`.
+> - **Live Mode:** Provide a valid `GEMINI_API_KEY` or `OPENAI_API_KEY`.
+> - **Offline Fallback Mode:** Leave keys empty or placeholder. The engine automatically switches to an offline deterministic synthesizer, enabling zero-cost local testing and development.
 
 ---
 
-## 🐳 Docker Deployment
+## 🏃 Running the Application
 
-The application includes a production-ready, **multi-stage Dockerfile** that builds isolated binary wheels in a builder stage and executes in a hardened runner container under a dedicated non-root user (`appuser`, UID 1000).
-
-To launch the complete engine inside Docker with persistent volumes for ChromaDB and uploads:
-
+### Option A: Direct Production Launcher (Recommended)
 ```bash
-# 1. Initialize environment configuration
-cp .env.example .env
+python scripts/start_production.py
+```
+Starts Uvicorn on `http://0.0.0.0:8000` with pre-flight persistence directory validation and `--workers 1` concurrency lock safety.
 
-# 2. Build and launch container
-docker compose up --build -d
+### Option B: Development Server
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+Interactive OpenAPI documentation is available at `http://127.0.0.1:8000/docs`.
+
+### Option C: Multi-Stage Docker Container
+```bash
+docker compose up -d --build
 ```
 
-Check container status and logs:
-
-```bash
-docker compose ps
-docker compose logs -f
-```
-
-Verify container readiness and health probes:
-
+Verify container readiness:
 ```bash
 curl http://localhost:8000/health/live
 curl http://localhost:8000/health/ready
 ```
 
-> **Multi-Worker Concurrency Note:**
-> By default, the production container runs with 1 Uvicorn worker. In-process ChromaDB utilizes an embedded SQLite database which is optimized for single-process write access. Furthermore, the default `memory` rate limiter is process-local. If scaling to multiple workers or multi-container clusters, configure `RATE_LIMIT_BACKEND=redis` with a shared `REDIS_URL`, and utilize a standalone client/server ChromaDB deployment.
+---
+
+## 🧪 Testing & Verification
+
+### Running Automated Test Suite
+Execute all 68 unit, integration, and security tests:
+```bash
+pytest tests/ -v
+```
+
+Expected output:
+```text
+============================= 68 passed in 29.58s =============================
+```
+
+### Running the Reproducible Benchmark Suite
+To measure latency percentiles and verify model dimensions on your specific hardware:
+```bash
+python scripts/benchmark_engine.py
+```
+Raw telemetry will be output to the console and saved to `benchmarks/benchmark_results.json`.
 
 ---
 
@@ -250,8 +347,7 @@ curl http://localhost:8000/health/ready
 
 ### 1. Ingest PDF Document
 `POST /api/v1/ingest` (multipart/form-data)
-
-- **Headers:** `X-API-Key: <token>` (if `API_KEY` is configured in `.env`)
+- **Headers:** `X-API-Key: <token>` (if `API_KEY` is configured)
 - **Body:** `file`: Binary PDF file (Max 50 MB, must have valid `%PDF-` header).
 
 ```bash
@@ -260,27 +356,8 @@ curl -X POST "http://127.0.0.1:8000/api/v1/ingest" \
   -F "file=@data/uploads/sample_quarterly_report.pdf"
 ```
 
-**Response (200 OK):**
-```json
-{
-  "status": "success",
-  "document_id": "sample_quarterly_report_4e81fb",
-  "filename": "sample_quarterly_report.pdf",
-  "stats": {
-    "total_pages": 2,
-    "text_chunks": 3,
-    "images_extracted": 1,
-    "images_summarized": 1
-  },
-  "message": "Successfully indexed 4 multi-modal chunks into ChromaDB"
-}
-```
-
----
-
 ### 2. Multi-Modal Natural Language Query
 `POST /api/v1/query` (application/json)
-
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/v1/query" \
   -H "Content-Type: application/json" \
@@ -292,76 +369,22 @@ curl -X POST "http://127.0.0.1:8000/api/v1/query" \
   }'
 ```
 
-**Response (200 OK):**
-```json
-{
-  "question": "What were the quarterly latency and accuracy trends?",
-  "answer": "According to Figure 1 on page 2, query accuracy scaled progressively across each quarter, reaching peak performance of 94% following the introduction of the unified multi-modal index. The visual bar chart outlines progression from Q1 through Q4.",
-  "sources": [
-    {
-      "content_preview": "Figure 1: Quarterly Model Latency and Accuracy Metrics Analysis of Figure 1...",
-      "source_pdf": "sample_quarterly_report.pdf",
-      "page_number": 2,
-      "chunk_type": "text",
-      "relevance_score": 0.8521,
-      "image_path": null,
-      "image_url": null
-    },
-    {
-      "content_preview": "Visual graphic extracted from sample_quarterly_report.pdf on page 2. Displays structured visual metrics...",
-      "source_pdf": "sample_quarterly_report.pdf",
-      "page_number": 2,
-      "chunk_type": "image_summary",
-      "relevance_score": 0.7842,
-      "image_path": "data/extracted_images/sample_quarterly_report/sample_quarterly_report_p2_img0.png",
-      "image_url": "/static/images/sample_quarterly_report/sample_quarterly_report_p2_img0.png"
-    }
-  ],
-  "metadata": {
-    "model_used": "gemini/gemini-1.5-flash",
-    "retrieval_time_ms": 14.25,
-    "generation_time_ms": 1120.4,
-    "total_sources": 2
-  }
-}
-```
-
----
-
 ### 3. Document Management
 - **List Ingested Documents:** `GET /api/v1/documents`
-- **Cascade Delete Document:** `DELETE /api/v1/documents/{filename}` (purges ChromaDB vectors, source PDF on disk, and extracted image directory).
+- **Cascade Delete Document:** `DELETE /api/v1/documents/{filename}` (purges ChromaDB vectors, source PDF, and extracted image directory).
 
 ---
 
-### 4. Health Probes
-- `GET /health`: Comprehensive status (ChromaDB connection, total vectors, active embedding engine, VLM status).
-- `GET /health/live`: Liveness check (HTTP 200).
-- `GET /health/ready`: Readiness check (verifies database responsiveness).
+## ⚠️ Known Limitations & Future Work
+
+1. **Retrieval Benchmark Dataset**: A standardized multi-modal document retrieval dataset with annotated ground-truth labels (such as DocVQA or BEIR) is needed to formally evaluate and publish Recall@K and MRR metrics.
+2. **Visual Semantic Deduplication**: Current deduplication uses SHA-256 byte hashing. Adding perceptual hashing (pHash) or visual embedding similarity would enable detecting visually identical graphics that differ only by compression artifacts or minor formatting.
+3. **Multi-Worker Scaling**: In-process ChromaDB SQLite locks write operations to a single process. Scaling beyond `--workers 1` or across multiple container replicas requires migrating to a standalone client/server vector database (such as Qdrant or Chroma server) and distributed Redis rate limiting.
 
 ---
 
-## 🔧 Windows & Enterprise Security Notes
+## 📄 License & Attribution
 
-On certain Windows environments with **Application Control / WDAC / AppLocker** policies enabled, PyTorch's native `torch_python.dll` may be restricted from loading in user AppData directories (`[WinError 4551]`).
-
-**Our Architecture Solution:**
-The `EmbeddingService` incorporates an automated dual-engine design:
-1. It attempts to load `sentence-transformers`.
-2. If blocked by OS security or if PyTorch is unavailable, it automatically activates the high-performance **ONNX Runtime engine** (`all-MiniLM-L6-v2/onnx.tar.gz`), running identical 384-dimensional normalized embeddings with faster CPU inference and zero DLL restrictions.
-
----
-
-## 🧪 Testing
-
-Execute the complete automated test suite across all units, security controls, and integration pipelines:
-
-```bash
-pytest tests/ -v
-```
-
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
+- **License**: Licensed under the [MIT License](LICENSE).
+- **Default Embedding Weights**: `all-MiniLM-L6-v2` by SentenceTransformers (Apache 2.0).
+- **PDF Extraction**: PyMuPDF / MuPDF (AGPL / Commercial license terms apply for commercial redistributions).

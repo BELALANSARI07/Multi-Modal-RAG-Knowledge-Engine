@@ -1,0 +1,108 @@
+{
+  "timestamp_utc": "2026-10-26T15:46:05Z",
+  "environment": {
+    "os": "Windows",
+    "os_release": "10",
+    "os_version": "10.0.26300",
+    "architecture": "AMD64",
+    "processor": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+    "python_version": "3.10.11",
+    "packages": {
+      "fastapi": "0.162.0",
+      "pydantic": "2.14.1",
+      "chromadb": "1.5.9",
+      "sentence_transformers": "6.2.0",
+      "torch": "2.14.1+cpu",
+      "onnxruntime": "1.23.2",
+      "pymupdf": "1.28.2",
+      "pillow": "not_installed",
+      "numpy": "2.2.6"
+    }
+  },
+  "embedding_engines": {
+    "configured_model": "all-MiniLM-L6-v2",
+    "configured_dimension": 384,
+    "primary_engine": {
+      "name": "sentence_transformers",
+      "status": "OPERATIONAL",
+      "load_time_seconds": 1.832,
+      "output_dimension": 384,
+      "is_normalized": true
+    },
+    "onnx_engine": {
+      "name": "chromadb_onnx_runtime",
+      "status": "OPERATIONAL",
+      "load_time_seconds": 0.0,
+      "output_dimension": 384,
+      "is_normalized": true
+    },
+    "cross_engine_cosine_similarity": 1.0
+  },
+  "deduplication": {
+    "hash_algorithm": "SHA-256",
+    "target_payload": "Extracted Raw Compressed Image Byte Stream",
+    "exact_byte_deduplication_supported": true,
+    "perceptual_similarity_supported": false,
+    "scope": "Document-level (page-by-page raster hash table)",
+    "conclusion": "Cryptographic exact-byte deduplication is verified. Perceptual or semantic visual deduplication (e.g. pHash/embeddings) is NOT implemented."
+  },
+  "retrieval_quality": {
+    "metric": "Recall@5",
+    "status": "NOT EVALUATED",
+    "ground_truth_dataset_found": false,
+    "reason": "No labeled ground-truth evaluation dataset (e.g. MS-MARCO, BEIR, or multi-modal PDF Q&A benchmark pairs) exists in the repository. In accordance with benchmark integrity rules, synthetic queries without verified human relevance labels cannot be used to fabricate a real-world Recall score.",
+    "definition": "Recall@K = |{Relevant Chunks in Top-K Retrieved}| / |{Total Relevant Chunks for Query}|",
+    "prerequisites_to_evaluate": [
+      "Annotated multi-modal PDF evaluation corpus with query-to-chunk relevance judgments.",
+      "Standardized benchmark runner comparing retrieved chunk IDs against ground-truth document IDs."
+    ]
+  },
+  "latencies": {
+    "cold_start_embedding_ms": 1360.34,
+    "stage_1_query_embedding": {
+      "sample_count": 50,
+      "mean_ms": 17.09,
+      "std_ms": 1.34,
+      "min_ms": 13.46,
+      "max_ms": 20.38,
+      "p50_ms": 16.98,
+      "p90_ms": 18.54,
+      "p95_ms": 19.79,
+      "p99_ms": 20.31
+    },
+    "stage_2_chroma_vector_search": {
+      "sample_count": 50,
+      "mean_ms": 3.39,
+      "std_ms": 0.77,
+      "min_ms": 2.76,
+      "max_ms": 6.53,
+      "p50_ms": 3.09,
+      "p90_ms": 3.95,
+      "p95_ms": 4.96,
+      "p99_ms": 6.39
+    },
+    "stage_3_combined_retrieval": {
+      "sample_count": 50,
+      "mean_ms": 20.48,
+      "std_ms": 1.55,
+      "min_ms": 16.53,
+      "max_ms": 23.64,
+      "p50_ms": 20.46,
+      "p90_ms": 22.82,
+      "p95_ms": 23.26,
+      "p99_ms": 23.49
+    },
+    "stage_4_end_to_end_query_pipeline": {
+      "sample_count": 50,
+      "mean_ms": 29.66,
+      "std_ms": 1.93,
+      "min_ms": 26.11,
+      "max_ms": 35.55,
+      "p50_ms": 29.44,
+      "p90_ms": 32.18,
+      "p95_ms": 33.54,
+      "p99_ms": 35.0
+    },
+    "e2e_mode": "Live VLM"
+  }
+}
